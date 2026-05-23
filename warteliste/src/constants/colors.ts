@@ -1,0 +1,14 @@
+export const COLORS = {
+    primary: '#00685f',
+    primaryContainer: '#008378',
+    onPrimary: '#ffffff',
+    background: '#f8f9ff',
+    surfaceContainerLowest: '#ffffff',
+    surfaceContainerLow: '#eff4ff',
+    surfaceContainerHigh: '#dce9ff',
+    onSurface: '#0b1c30',
+    onSurfaceVariant: '#3d4947',
+    outlineVariant: '#bcc9c6',
+    error: '#ba1a1a',
+    secondaryContainer: '#dae2fd',
+  };
