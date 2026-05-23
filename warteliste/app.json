@@ -1,11 +1,11 @@
 {
   "expo": {
-    "name": "warterliste",
-    "slug": "warterliste",
+    "name": "warteliste",
+    "slug": "warteliste",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
-    "scheme": "warterliste",
+    "scheme": "warteliste",
     "userInterfaceStyle": "automatic",
     "ios": {
       "icon": "./assets/expo.icon"
