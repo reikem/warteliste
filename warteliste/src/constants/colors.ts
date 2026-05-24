@@ -8,6 +8,7 @@ export const COLORS = {
     surfaceContainerHigh: '#dce9ff',
     onSurface: '#0b1c30',
     onSurfaceVariant: '#3d4947',
+    outline: '#707977',        
     outlineVariant: '#bcc9c6',
     error: '#ba1a1a',
     secondaryContainer: '#dae2fd',
