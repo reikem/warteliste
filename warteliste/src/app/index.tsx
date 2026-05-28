@@ -1,6 +1,8 @@
-import * as Device from 'expo-device';
-import { Platform, StyleSheet } from 'react-native';
+import React from 'react';
+import { Platform, StyleSheet, ScrollView, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { Link } from 'expo-router';
+import { LayoutDashboard, Printer, Tv, Monitor, Settings, ChevronRight } from 'lucide-react-native';
 
 import { AnimatedIcon } from '@/components/animated-icon';
 import { HintRow } from '@/components/hint-row';
@@ -9,53 +11,88 @@ import { ThemedView } from '@/components/themed-view';
 import { WebBadge } from '@/components/web-badge';
 import { BottomTabInset, MaxContentWidth, Spacing } from '@/constants/theme';
 
-function getDevMenuHint() {
-  if (Platform.OS === 'web') {
-    return <ThemedText type="small">use browser devtools</ThemedText>;
-  }
-  if (Device.isDevice) {
-    return (
-      <ThemedText type="small">
-        shake device or press <ThemedText type="code">m</ThemedText> in terminal
-      </ThemedText>
-    );
-  }
-  const shortcut = Platform.OS === 'android' ? 'cmd+m (or ctrl+m)' : 'cmd+d';
-  return (
-    <ThemedText type="small">
-      press <ThemedText type="code">{shortcut}</ThemedText>
-    </ThemedText>
-  );
-}
-
 export default function HomeScreen() {
   return (
     <ThemedView style={styles.container}>
       <SafeAreaView style={styles.safeArea}>
-        <ThemedView style={styles.heroSection}>
-          <AnimatedIcon />
-          <ThemedText type="title" style={styles.title}>
-            Welcome to&nbsp;Expo
+        <ScrollView 
+          showsVerticalScrollIndicator={false} 
+          contentContainerStyle={styles.scrollContent}
+          style={{ width: '100%' }}
+        >
+          {/* Hero Header */}
+          <ThemedView style={styles.heroSection}>
+            <AnimatedIcon />
+            <ThemedText type="title" style={styles.title}>
+              QueueMaster Pro
+            </ThemedText>
+            <ThemedText type="small" style={styles.subtitle}>
+              Panel de desarrollo y acceso rápido a pantallas operacionales.
+            </ThemedText>
+          </ThemedView>
+
+          <ThemedText type="code" style={styles.code}>
+            Módulos del Sistema
           </ThemedText>
-        </ThemedView>
 
-        <ThemedText type="code" style={styles.code}>
-          get started
-        </ThemedText>
+          {/* Contenedor de Accesos rápidos */}
+          <ThemedView type="backgroundElement" style={styles.stepContainer}>
+            
+            <Link href="/dashboard" asChild>
+              <TouchableOpacity style={styles.menuRow}>
+                <LayoutDashboard size={20} color="#00685f" />
+                <View style={{ flex: 1, marginLeft: 12 }}>
+                  <ThemedText style={{ fontWeight: '600' }}>Employee Dashboard</ThemedText>
+                </View>
+                <ChevronRight size={18} color="#6d7a77" />
+              </TouchableOpacity>
+            </Link>
 
-        <ThemedView type="backgroundElement" style={styles.stepContainer}>
-          <HintRow
-            title="Try editing"
-            hint={<ThemedText type="code">src/app/index.tsx</ThemedText>}
-          />
-          <HintRow title="Dev tools" hint={getDevMenuHint()} />
-          <HintRow
-            title="Fresh start"
-            hint={<ThemedText type="code">npm run reset-project</ThemedText>}
-          />
-        </ThemedView>
+            <Link href="/printPreview" asChild>
+              <TouchableOpacity style={styles.menuRow}>
+                <Printer size={20} color="#00685f" />
+                <View style={{ flex: 1, marginLeft: 12 }}>
+                  <ThemedText style={{ fontWeight: '600' }}>Previsualizar Impresión</ThemedText>
+                </View>
+                <ChevronRight size={18} color="#6d7a77" />
+              </TouchableOpacity>
+            </Link>
 
-        {Platform.OS === 'web' && <WebBadge />}
+            <Link href="/kiosk" asChild>
+              <TouchableOpacity style={styles.menuRow}>
+                <Tv size={20} color="#00685f" />
+                <View style={{ flex: 1, marginLeft: 12 }}>
+                  <ThemedText style={{ fontWeight: '600' }}>Modo Kiosko (Autogestión)</ThemedText>
+                </View>
+                <ChevronRight size={18} color="#6d7a77" />
+              </TouchableOpacity>
+            </Link>
+
+            <Link href="/monitor" asChild>
+              <TouchableOpacity style={styles.menuRow}>
+                <Monitor size={20} color="#00685f" />
+                <View style={{ flex: 1, marginLeft: 12 }}>
+                  <ThemedText style={{ fontWeight: '600' }}>Pantalla de Turnos (Monitor)</ThemedText>
+                </View>
+                <ChevronRight size={18} color="#6d7a77" />
+              </TouchableOpacity>
+            </Link>
+
+            <Link href="/queueMasterSetupScreen" asChild>
+              {/* SOLUCIÓN: Uso de StyleSheet.flatten para combinar los estilos */}
+              <TouchableOpacity style={StyleSheet.flatten([styles.menuRow, { borderBottomWidth: 0 }])}>
+                <Settings size={20} color="#00685f" />
+                <View style={{ flex: 1, marginLeft: 12 }}>
+                  <ThemedText style={{ fontWeight: '600' }}>Configuración Inicial</ThemedText>
+                </View>
+                <ChevronRight size={18} color="#6d7a77" />
+              </TouchableOpacity>
+            </Link>
+
+          </ThemedView>
+
+          {Platform.OS === 'web' && <WebBadge />}
+        </ScrollView>
       </SafeAreaView>
     </ThemedView>
   );
@@ -69,30 +106,56 @@ const styles = StyleSheet.create({
   },
   safeArea: {
     flex: 1,
+    maxWidth: MaxContentWidth,
+    width: '100%',
+  },
+  scrollContent: {
     paddingHorizontal: Spacing.four,
     alignItems: 'center',
     gap: Spacing.three,
-    paddingBottom: BottomTabInset + Spacing.three,
-    maxWidth: MaxContentWidth,
+    paddingBottom: BottomTabInset + Spacing.five,
   },
   heroSection: {
     alignItems: 'center',
     justifyContent: 'center',
-    flex: 1,
-    paddingHorizontal: Spacing.four,
-    gap: Spacing.four,
+    paddingVertical: Spacing.five,
+    gap: Spacing.two,
+    width: '100%',
   },
   title: {
     textAlign: 'center',
+    fontSize: 28,
+    fontWeight: '700',
+  },
+  subtitle: {
+    textAlign: 'center',
+    opacity: 0.7,
+    paddingHorizontal: Spacing.four,
   },
   code: {
     textTransform: 'uppercase',
+    alignSelf: 'flex-start',
+    fontSize: 12,
+    fontWeight: '700',
+    letterSpacing: 1,
+    color: '#00685f',
+    marginTop: Spacing.two,
   },
   stepContainer: {
-    gap: Spacing.three,
+    gap: 0,
     alignSelf: 'stretch',
-    paddingHorizontal: Spacing.three,
-    paddingVertical: Spacing.four,
-    borderRadius: Spacing.four,
+    borderRadius: Spacing.three,
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: '#bcc9c6',
+    backgroundColor: '#ffffff',
   },
+  menuRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: Spacing.four,
+    paddingVertical: Spacing.four,
+    borderBottomWidth: 1,
+    borderBottomColor: '#eff4ff',
+  }
 });

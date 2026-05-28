@@ -1,213 +1,353 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { View, Text, ScrollView, TouchableOpacity, Image, Animated, Easing, Dimensions } from 'react-native';
-import { LayoutGrid, Megaphone, Settings, Users, Monitor, Play, Pause, Gift, Award, Zap } from 'lucide-react-native';
-import { NowServingCard } from '@/components/ui/nowServingCard';
-import { Ticket, RecentTurnsList } from '@/components/ui/recentTurnsList';
-import { WeatherState, WeatherWidget } from '@/components/ui/weatherWidget';
+/**
+ * QueueMaster Pro — Monitor (Usuario monitor)
+ * - Escucha eventos del eventBus en tiempo real
+ * - Cuando un empleado presiona "Llamar Siguiente", el monitor actualiza
+ * - Animación de entrada al recibir nuevo ticket
+ * - Marquee con información
+ * - Historial de turnos recientes
+ */
 
-// Importación de componentes locales reutilizables
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import {
+  View, Text, ScrollView, TouchableOpacity, Animated,
+  Easing, Dimensions, StyleSheet, Alert,
+} from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { LogOut, Wifi, WifiOff } from 'lucide-react-native';
+import { router } from 'expo-router';
+import { useAuth } from '../../service/authContext';
+import { COLORS } from '../constants/colors';
+import { getRecentCompleted, getQueueStats, getWaitingQueue } from '../../service/queueservice';
+import { bus, EVENTS, TicketCalledPayload, TicketCreatedPayload } from '../../service/eventBus';
+import type { Queue } from '../../service/database';
 
+const { width: SW } = Dimensions.get('window');
 
-const { width: SCREEN_WIDTH } = Dimensions.get('window');
+interface CurrentCall {
+  ticketNumber: string;
+  desk: string;
+  sectionTitle: string;
+  servedBy: string;
+}
 
 export default function MonitorScreen() {
-  // --- Estados del Sistema ---
-  const [currentTicket, setCurrentTicket] = useState<Ticket>({ id: '1', number: 'A-124', desk: 'Desk 4' });
-  const [recentTurns, setRecentTurns] = useState<Ticket[]>([
-    { id: 'h1', number: 'A-123', desk: 'Desk 1' },
-    { id: 'h2', number: 'C-014', desk: 'Desk 3' },
-    { id: 'h3', number: 'A-122', desk: 'Desk 2' },
-    { id: 'h4', number: 'B-205', desk: 'Desk 4' },
-  ]);
-  const [ticketCounter, setTicketCounter] = useState<number>(124);
-  const [currentTime, setCurrentTime] = useState<string>('12:45 PM');
-  const [activeTab, setActiveTab] = useState<string>('Monitor');
-  
-  const [weather, setWeather] = useState<WeatherState>({
-    isSunny: true,
-    desc: 'Sunny & Bright',
-    temp: '72°F',
-    high: 'H: 78°',
-    low: 'L: 64°'
-  });
+  const { logout } = useAuth();
 
-  // --- Referencias de Animación ---
-  const marqueeAnim = useRef(new Animated.Value(0)).current;
-  const bellScale = useRef(new Animated.Value(1)).current;
-  const ticketOpacity = useRef(new Animated.Value(1)).current;
-  
-  // --- Estado del Carrusel de Ofertas ---
-  const [isCarouselPlaying, setIsCarouselPlaying] = useState<boolean>(true);
-  const [carouselIndex, setCarouselIndex] = useState<number>(0);
-  const carouselOffers = [
-    { id: 1, title: 'Seasonal Rewards', desc: 'Check your app for exclusive holiday points!', icon: <Gift size={32} color="#00685f" /> },
-    { id: 2, title: 'Premium Upgrade', desc: 'Upgrade today for faster service and lounge access.', icon: <Award size={32} color="#00685f" /> },
-    { id: 3, title: 'EV Charging', desc: 'Free charging available for all premium members.', icon: <Zap size={32} color="#00685f" /> },
-  ];
+  const [current, setCurrent]       = useState<CurrentCall | null>(null);
+  const [history, setHistory]       = useState<Queue[]>([]);
+  const [stats, setStats]           = useState({ waiting: 0, serving: 0, completed_today: 0, avg_wait_seconds: 0 });
+  const [currentTime, setTime]      = useState('');
+  const [isLive, setIsLive]         = useState(true);
+  const [newCall, setNewCall]       = useState(false); // flash de nueva llamada
 
-  // Ciclo de reloj en tiempo real
-  useEffect(() => {
-    const timer = setInterval(() => {
-      const now = new Date();
-      setCurrentTime(now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true }).toUpperCase());
-    }, 1000);
-    return () => clearInterval(timer);
+  // Animaciones
+  const pulseAnim   = useRef(new Animated.Value(1)).current;
+  const flashAnim   = useRef(new Animated.Value(0)).current;
+  const numberScale = useRef(new Animated.Value(1)).current;
+  const marqueeAnim = useRef(new Animated.Value(SW)).current;
+
+  // ─── Cargar datos iniciales ───────────────────────────────────────────────
+
+  const reloadStats = useCallback(() => {
+    setStats(getQueueStats());
+    setHistory(getRecentCompleted(6));
   }, []);
 
-  // Animación Loop de la cinta informativa inferior
   useEffect(() => {
-    marqueeAnim.setValue(0);
+    reloadStats();
+  }, [reloadStats]);
+
+  // ─── Reloj en tiempo real ─────────────────────────────────────────────────
+
+  useEffect(() => {
+    const tick = () => {
+      const now = new Date();
+      setTime(now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true }).toUpperCase());
+    };
+    tick();
+    const t = setInterval(tick, 1000);
+    return () => clearInterval(t);
+  }, []);
+
+  // ─── Animación de pulso continuo ─────────────────────────────────────────
+
+  useEffect(() => {
     Animated.loop(
+      Animated.sequence([
+        Animated.timing(pulseAnim, { toValue: 1.04, duration: 1200, easing: Easing.inOut(Easing.ease), useNativeDriver: true }),
+        Animated.timing(pulseAnim, { toValue: 1,    duration: 1200, easing: Easing.inOut(Easing.ease), useNativeDriver: true }),
+      ])
+    ).start();
+  }, [pulseAnim]);
+
+  // ─── Animación marquee ───────────────────────────────────────────────────
+
+  useEffect(() => {
+    const runMarquee = () => {
+      marqueeAnim.setValue(SW);
       Animated.timing(marqueeAnim, {
-        toValue: -SCREEN_WIDTH,
-        duration: 16000,
+        toValue: -SW * 2,
+        duration: 22000,
         easing: Easing.linear,
         useNativeDriver: true,
-      })
-    ).start();
+      }).start(({ finished }) => { if (finished) runMarquee(); });
+    };
+    runMarquee();
   }, [marqueeAnim]);
 
-  // Autoplay del bloque multimedia
-  useEffect(() => {
-    let autoplayTimer: NodeJS.Timeout;
-    if (isCarouselPlaying) {
-      autoplayTimer = setInterval(() => {
-        setCarouselIndex((prev) => (prev + 1) % carouselOffers.length);
-      }, 4000);
-    }
-    return () => clearInterval(autoplayTimer);
-  }, [isCarouselPlaying]);
+  // ─── Flash de nueva llamada ───────────────────────────────────────────────
 
-  // Interacción: Simular paso de turnos
-  const handleNextTurn = () => {
+  const playCallAnimation = useCallback(() => {
+    setNewCall(true);
+    // Flash de fondo
     Animated.sequence([
-      Animated.parallel([
-        Animated.timing(ticketOpacity, { toValue: 0.3, duration: 120, useNativeDriver: true }),
-        Animated.timing(bellScale, { toValue: 1.25, duration: 120, useNativeDriver: true })
-      ]),
-      Animated.parallel([
-        Animated.timing(ticketOpacity, { toValue: 1, duration: 180, useNativeDriver: true }),
-        Animated.timing(bellScale, { toValue: 1, duration: 180, useNativeDriver: true })
-      ])
+      Animated.timing(flashAnim, { toValue: 1, duration: 150, useNativeDriver: false }),
+      Animated.timing(flashAnim, { toValue: 0, duration: 300, useNativeDriver: false }),
+      Animated.timing(flashAnim, { toValue: 1, duration: 150, useNativeDriver: false }),
+      Animated.timing(flashAnim, { toValue: 0, duration: 300, useNativeDriver: false }),
     ]).start();
+    // Escala del número
+    Animated.sequence([
+      Animated.timing(numberScale, { toValue: 1.15, duration: 200, useNativeDriver: true }),
+      Animated.spring(numberScale,  { toValue: 1,    useNativeDriver: true, friction: 4 }),
+    ]).start();
+    setTimeout(() => setNewCall(false), 3000);
+  }, [flashAnim, numberScale]);
 
-    const nextCount = ticketCounter + 1;
-    const prefixes = ['A', 'B', 'C'];
-    const newNum = `${prefixes[Math.floor(Math.random() * 3)]}-${nextCount}`;
-    const newDesk = `Desk ${Math.floor(Math.random() * 5) + 1}`;
+  // ─── EventBus: escuchar llamadas del dashboard ────────────────────────────
 
-    setRecentTurns(prev => [{ id: Date.now().toString(), number: currentTicket.number, desk: currentTicket.desk }, ...prev.slice(0, 3)]);
-    setTicketCounter(nextCount);
-    setCurrentTicket({ id: Date.now().toString(), number: newNum, desk: newDesk });
+  useEffect(() => {
+    const unsubCall = bus.on<TicketCalledPayload>(EVENTS.TICKET_CALLED, (payload) => {
+      setCurrent({
+        ticketNumber: payload.ticketNumber,
+        desk:         payload.desk,
+        sectionTitle: payload.sectionTitle,
+        servedBy:     payload.servedBy,
+      });
+      playCallAnimation();
+      reloadStats();
+    });
+
+    const unsubQueue = bus.on(EVENTS.QUEUE_UPDATED, () => {
+      reloadStats();
+      setHistory(getRecentCompleted(6));
+    });
+
+    const unsubCreated = bus.on<TicketCreatedPayload>(EVENTS.TICKET_CREATED, () => {
+      reloadStats();
+    });
+
+    return () => {
+      unsubCall();
+      unsubQueue();
+      unsubCreated();
+    };
+  }, [playCallAnimation, reloadStats]);
+
+  // ─── Color de flash ───────────────────────────────────────────────────────
+
+  const flashBg = flashAnim.interpolate({
+    inputRange:  [0, 1],
+    outputRange: [COLORS.surfaceContainerLowest, COLORS.primary + '18'],
+  });
+
+  const handleLogout = () => {
+    Alert.alert('Salir', '¿Cerrar sesión de monitor?', [
+      { text: 'Cancelar', style: 'cancel' },
+      { text: 'Salir', style: 'destructive', onPress: async () => { await logout(); router.replace('/login'); } },
+    ]);
   };
 
-  // Interacción: Cambiar clima simulado
-  const handleToggleWeather = () => {
-    setWeather(prev => prev.isSunny ? {
-      isSunny: false,
-      desc: 'Cloudy & Rain',
-      temp: '58°F',
-      high: 'H: 62°',
-      low: 'L: 52°'
-    } : {
-      isSunny: true,
-      desc: 'Sunny & Bright',
-      temp: '72°F',
-      high: 'H: 78°',
-      low: 'L: 64°'
-    });
+  const formatWait = (secs: number) => {
+    if (secs < 60) return `${secs}s`;
+    return `${Math.round(secs / 60)}m`;
   };
 
   return (
-    <View className="flex-1 bg-[#f8f9ff]">
-      
-      {/* HEADER */}
-      <View className="w-full bg-white border-b border-[#bcc9c6] px-4 py-4 flex-row justify-between items-center">
-        <View className="flex-row items-center gap-4">
-          <TouchableOpacity onPress={handleNextTurn} activeOpacity={0.8} className="w-10 h-10 bg-[#00685f] rounded-lg items-center justify-center shadow-sm">
-            <LayoutGrid size={22} color="#ffffff" />
-          </TouchableOpacity>
-          <View>
-            <Text className="text-xl font-bold text-[#00685f] font-[HankenGrotesk]">QueueMaster Pro</Text>
-            <Text className="text-[13px] font-semibold text-[#3d4947] tracking-wider uppercase font-[Inter]">Lobby View • Floor 1</Text>
-          </View>
+    <SafeAreaView style={styles.root} edges={['top']}>
+
+      {/* TOP BAR */}
+      <View style={styles.topBar}>
+        <View style={styles.topLeft}>
+          <View style={[styles.liveDot, { backgroundColor: isLive ? '#4ade80' : COLORS.error }]} />
+          <Text style={styles.topTitle}>QueueMaster Pro</Text>
+          <Text style={styles.topSub}>Lobby · Floor 1</Text>
         </View>
-        <View className="w-10 h-10 rounded-full bg-[#dae2fd] border border-[#bcc9c6] overflow-hidden">
-          <Image source={{ uri: 'https://lh3.googleusercontent.com/aida-public/AB6AXuASnnIeGXL4R8MCFOXxBKMSxX5VYz5AyHjLJKpT_j1NQtegXJRIL_YXGo_aLTwynMrTQlHcG853K3D80pELkvNyrSh49J4p4OSc7Xc5tZ1KXqHqu5j97sYKTbhkgzBhmEaAEALe_KhxDKtNklxm4yu01tmWtD0Ntp-j7HLREYRjjzgPAVy95w1MFiWiKi1XTrxfByLR2eHeTinoIoOpGC81qp-1awjBH8R6qkDdCqsWjbG9WQ0rQjHR_NbritnLuvtoaR-GymPZt30r' }} className="w-full h-full object-cover" />
+        <View style={styles.topRight}>
+          <Text style={styles.clock}>{currentTime}</Text>
+          {isLive ? <Wifi size={16} color="#4ade80" /> : <WifiOff size={16} color={COLORS.error} />}
+          <TouchableOpacity onPress={handleLogout} style={styles.logoutBtn}>
+            <LogOut size={18} color={COLORS.inverseOnSurface + 'aa'} />
+          </TouchableOpacity>
         </View>
       </View>
 
-      {/* CONTENIDO SCROLLABLE */}
-      <ScrollView contentContainerStyle={{ paddingBottom: 140 }} className="flex-1 p-4 gap-4" showsVerticalScrollIndicator={false}>
-        
-        {/* Componente Reutilizable 1: Turno Actual */}
-        <NowServingCard 
-          ticketNumber={currentTicket.number} 
-          deskNumber={currentTicket.desk} 
-          bellScale={bellScale} 
-          ticketOpacity={ticketOpacity} 
-        />
+      <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
 
-        {/* Componente Reutilizable 2: Clima */}
-        <WeatherWidget data={weather} onPress={handleToggleWeather} />
+        {/* AHORA SIRVIENDO — bloque principal */}
+        <Animated.View style={[styles.nowCard, { backgroundColor: flashBg }]}>
+          {newCall && (
+            <View style={styles.newCallBanner}>
+              <Text style={styles.newCallText}>🔔 ¡NUEVO LLAMADO!</Text>
+            </View>
+          )}
 
-        {/* Bloque Multimedia / Ofertas */}
-        <View className="w-full min-h-[200px] bg-[#eff4ff] border border-[#bcc9c6] rounded-lg overflow-hidden">
-          <View className="p-3 px-4 bg-[#f8f9ff] border-b border-[#bcc9c6] flex-row justify-between items-center">
-            <Text className="text-[13px] font-bold text-[#3d4947] uppercase tracking-widest font-[Inter]">Multimedia & Offers</Text>
-            <TouchableOpacity onPress={() => setIsCarouselPlaying(!isCarouselPlaying)} className="p-1 rounded bg-[#d3e4fe]">
-              {isCarouselPlaying ? <Pause size={18} color="#00685f" /> : <Play size={18} color="#00685f" />}
-            </TouchableOpacity>
+          <View style={styles.nowHeader}>
+            <Text style={styles.nowLabel}>🔔  AHORA SIRVIENDO</Text>
+            {current && (
+              <View style={styles.deskBadge}>
+                <Text style={styles.deskBadgeText}>{current.desk}</Text>
+              </View>
+            )}
           </View>
-          <View className="flex-1 items-center justify-center p-6 min-h-[140px]">
-            <View className="w-full items-center">
-              <View className="mb-2 bg-white p-3 rounded-full shadow-sm">{carouselOffers[carouselIndex].icon}</View>
-              <Text className="text-lg font-bold text-[#00685f] mb-1 font-[HankenGrotesk]">{carouselOffers[carouselIndex].title}</Text>
-              <Text className="text-xs text-[#3d4947] text-center max-w-[85%] font-[Inter]">{carouselOffers[carouselIndex].desc}</Text>
+
+          {current ? (
+            <>
+              <Animated.Text style={[styles.bigNumber, { transform: [{ scale: numberScale }] }]}>
+                {current.ticketNumber}
+              </Animated.Text>
+              <Text style={styles.nowSection}>{current.sectionTitle}</Text>
+              <View style={styles.deskRow}>
+                <Text style={styles.deskLabel}>Dirígete a:</Text>
+                <View style={styles.deskChip}>
+                  <Text style={styles.deskChipText}>{current.desk}</Text>
+                </View>
+              </View>
+              <Text style={styles.servedBy}>Atendido por: {current.servedBy}</Text>
+            </>
+          ) : (
+            <View style={styles.standby}>
+              <Text style={styles.standbyIcon}>⏳</Text>
+              <Text style={styles.standbyText}>En espera de llamado...</Text>
+              <Text style={styles.standbySub}>El número aparecerá aquí cuando un empleado llame el siguiente turno</Text>
             </View>
-            <View className="flex-row gap-1.5 mt-4">
-              {carouselOffers.map((_, idx) => (
-                <View key={idx} className={`w-2 h-2 rounded-full ${idx === carouselIndex ? 'bg-[#00685f] w-4' : 'bg-[#bcc9c6]'}`} />
-              ))}
+          )}
+        </Animated.View>
+
+        {/* ESTADÍSTICAS */}
+        <View style={styles.statsRow}>
+          {[
+            { label: 'Esperando',  val: stats.waiting,         icon: '👥', color: COLORS.primary },
+            { label: 'Completados', val: stats.completed_today, icon: '✅', color: COLORS.primaryContainer },
+            { label: 'Espera prom', val: formatWait(stats.avg_wait_seconds), icon: '⏱', color: COLORS.secondary },
+          ].map(s => (
+            <View key={s.label} style={styles.statCard}>
+              <Text style={styles.statIcon}>{s.icon}</Text>
+              <Text style={[styles.statVal, { color: s.color }]}>{s.val}</Text>
+              <Text style={styles.statLabel}>{s.label}</Text>
             </View>
-          </View>
+          ))}
         </View>
 
-        {/* Componente Reutilizable 3: Historial de Turnos */}
-        <RecentTurnsList turns={recentTurns} />
+        {/* HISTORIAL RECIENTE */}
+        {history.length > 0 && (
+          <View style={styles.historyCard}>
+            <Text style={styles.historyTitle}>Turnos Recientes</Text>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.historyScroll}>
+              {history.map((t, i) => (
+                <View key={t.id} style={[styles.histChip, { opacity: 1 - i * 0.13 }]}>
+                  <Text style={styles.histNum}>{t.ticket_number}</Text>
+                  <Text style={styles.histDesk}>{t.desk ?? '—'}</Text>
+                </View>
+              ))}
+            </ScrollView>
+          </View>
+        )}
 
       </ScrollView>
 
-      {/* MARQUEE INFORMATIVO INFERIOR */}
-      <View className="absolute bottom-14 left-0 right-0 bg-[#213145] py-2.5 flex-row items-center overflow-hidden">
-        <Animated.View style={{ transform: [{ translateX: marqueeAnim }] }} className="flex-row gap-8">
-          <Text className="text-[13px] text-[#eaf1ff] font-bold uppercase tracking-wider font-[Inter]">
-            Estimated wait time is 12 minutes. Please have your ID ready.  •  Join our loyalty program for prioritized queuing.
-          </Text>
-        </Animated.View>
-        <View className="absolute right-0 top-0 bottom-0 bg-[#213145] flex-row items-center px-4 gap-3 border-l border-white/10">
-          <Text className="text-[13px] text-[#eaf1ff] font-medium font-[Inter]">{currentTime}</Text>
-          <View className="flex-row items-center gap-1.5">
-            <View className="w-2 h-2 rounded-full bg-[#6bd8cb]" />
-            <Text className="text-[11px] font-bold text-[#eaf1ff] uppercase font-[Inter] opacity-80">Live</Text>
-          </View>
-        </View>
+      {/* MARQUEE INFERIOR */}
+      <View style={styles.marqueeBar}>
+        <Animated.Text style={[styles.marqueeText, { transform: [{ translateX: marqueeAnim }] }]}>
+          ⚡ Tiempo estimado de espera: {formatWait(stats.avg_wait_seconds)}  •  {stats.waiting} personas en fila  •  Tenga su identificación lista para un servicio más rápido  •  Únase a nuestro programa de fidelidad para prioridad de atención
+        </Animated.Text>
       </View>
 
-      {/* BOTTOM TAB BAR */}
-      <View className="absolute bottom-0 left-0 right-0 bg-white border-t border-[#bcc9c6] flex-row justify-around items-center h-14 px-2">
-        {['Setup', 'Queue', 'Kiosk', 'Monitor'].map((tab) => (
-          <TouchableOpacity 
-            key={tab}
-            onPress={() => setActiveTab(tab)}
-            className={`flex-col items-center justify-center px-4 py-1 rounded-full ${activeTab === tab ? 'bg-[#008378] px-6' : 'opacity-60'}`}
-          >
-            <Settings size={20} color={activeTab === tab ? '#f4fffc' : '#3d4947'} />
-            <Text className={`text-[9px] uppercase font-bold mt-0.5 ${activeTab === tab ? 'text-[#f4fffc]' : 'text-[#3d4947]'}`}>{tab}</Text>
-          </TouchableOpacity>
-        ))}
-      </View>
-
-    </View>
+    </SafeAreaView>
   );
 }
+
+const styles = StyleSheet.create({
+  root: { flex: 1, backgroundColor: COLORS.inverseSurface },
+
+  topBar: {
+    flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
+    paddingHorizontal: 16, paddingVertical: 12,
+    backgroundColor: COLORS.inverseSurface,
+    borderBottomWidth: 1, borderBottomColor: 'rgba(255,255,255,0.08)',
+  },
+  topLeft: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  liveDot: { width: 8, height: 8, borderRadius: 4 },
+  topTitle: { fontSize: 16, fontWeight: '700', color: COLORS.inverseOnSurface },
+  topSub: { fontSize: 12, color: COLORS.inverseOnSurface + '80' },
+  topRight: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  clock: { fontSize: 14, fontWeight: '600', color: COLORS.inverseOnSurface },
+  logoutBtn: { padding: 6 },
+
+  scroll: { padding: 14, gap: 14, paddingBottom: 60 },
+
+  nowCard: {
+    borderRadius: 16, padding: 28, alignItems: 'center', gap: 10,
+    borderWidth: 1, borderColor: COLORS.outlineVariant,
+    overflow: 'hidden', minHeight: 280,
+  },
+  newCallBanner: {
+    position: 'absolute', top: 0, left: 0, right: 0,
+    backgroundColor: COLORS.primary, paddingVertical: 8, alignItems: 'center',
+  },
+  newCallText: { fontSize: 14, fontWeight: '800', color: COLORS.onPrimary, letterSpacing: 2 },
+  nowHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', width: '100%', marginTop: 8 },
+  nowLabel: { fontSize: 13, fontWeight: '700', color: COLORS.onSurfaceVariant, letterSpacing: 1.5, textTransform: 'uppercase' },
+  deskBadge: { backgroundColor: COLORS.primaryContainer, paddingHorizontal: 12, paddingVertical: 4, borderRadius: 999 },
+  deskBadgeText: { fontSize: 13, fontWeight: '700', color: COLORS.onPrimaryContainer },
+  bigNumber: { fontSize: 100, fontWeight: '800', color: COLORS.primary, letterSpacing: -4, lineHeight: 110 },
+  nowSection: { fontSize: 18, fontWeight: '600', color: COLORS.onSurfaceVariant },
+  deskRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 4 },
+  deskLabel: { fontSize: 15, color: COLORS.onSurfaceVariant },
+  deskChip: {
+    backgroundColor: COLORS.primaryContainer, paddingHorizontal: 20, paddingVertical: 8,
+    borderRadius: 12,
+  },
+  deskChipText: { fontSize: 22, fontWeight: '700', color: COLORS.onPrimaryContainer },
+  servedBy: { fontSize: 12, color: COLORS.outline, marginTop: 4 },
+  standby: { alignItems: 'center', gap: 10, paddingVertical: 20 },
+  standbyIcon: { fontSize: 48 },
+  standbyText: { fontSize: 18, fontWeight: '600', color: COLORS.onSurfaceVariant },
+  standbySub: { fontSize: 13, color: COLORS.outline, textAlign: 'center', maxWidth: 280, lineHeight: 18 },
+
+  statsRow: { flexDirection: 'row', gap: 10 },
+  statCard: {
+    flex: 1, backgroundColor: COLORS.surfaceContainerLowest + 'dd',
+    borderRadius: 12, padding: 14, alignItems: 'center', gap: 4,
+    borderWidth: 1, borderColor: COLORS.outlineVariant,
+  },
+  statIcon: { fontSize: 20 },
+  statVal: { fontSize: 24, fontWeight: '700' },
+  statLabel: { fontSize: 11, color: COLORS.onSurfaceVariant, textAlign: 'center' },
+
+  historyCard: {
+    backgroundColor: COLORS.surfaceContainerLowest + 'cc',
+    borderRadius: 12, padding: 14,
+    borderWidth: 1, borderColor: COLORS.outlineVariant,
+    gap: 10,
+  },
+  historyTitle: { fontSize: 12, fontWeight: '700', color: COLORS.onSurfaceVariant, textTransform: 'uppercase', letterSpacing: 1 },
+  historyScroll: { gap: 10 },
+  histChip: {
+    backgroundColor: COLORS.surfaceContainerLow,
+    borderRadius: 10, paddingHorizontal: 16, paddingVertical: 10,
+    alignItems: 'center', minWidth: 80,
+    borderWidth: 1, borderColor: COLORS.outlineVariant,
+  },
+  histNum: { fontSize: 16, fontWeight: '700', color: COLORS.primary },
+  histDesk: { fontSize: 11, color: COLORS.onSurfaceVariant, marginTop: 2 },
+
+  marqueeBar: {
+    position: 'absolute', bottom: 0, left: 0, right: 0,
+    backgroundColor: COLORS.primary, paddingVertical: 10, overflow: 'hidden',
+  },
+  marqueeText: {
+    fontSize: 13, fontWeight: '600', color: COLORS.onPrimary,
+    textTransform: 'uppercase', letterSpacing: 0.5,
+  },
+});

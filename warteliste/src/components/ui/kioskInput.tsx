@@ -1,5 +1,6 @@
 import React from 'react';
-import { View, Text, TextInput, TouchableOpacity } from 'react-native';
+import { View, Text, TextInput, TouchableOpacity, StyleSheet } from 'react-native';
+import { COLORS } from '@/constants/colors';
 
 interface KioskInputProps {
   label: string;
@@ -19,27 +20,71 @@ export const KioskInput: React.FC<KioskInputProps> = ({
   onPress,
 }) => {
   return (
-    <View className="flex-col gap-2 w-full">
-      <Text className="text-[13px] font-medium text-[#3d4947] px-1 uppercase tracking-wider font-[Inter]">
-        {label}
-      </Text>
+    <View style={styles.wrapper}>
+      <Text style={styles.label}>{label}</Text>
       <TouchableOpacity
         activeOpacity={0.9}
         onPress={onPress}
-        className={`relative w-full h-16 bg-[#eff4ff] border rounded-lg flex-row items-center px-4 transition-all ${
-          isFocused ? 'border-[#00685f] border-2 shadow-sm' : 'border-[#bcc9c6]'
-        }`}
+        style={[
+          styles.inputRow,
+          isFocused && styles.inputRowFocused,
+        ]}
       >
-        <View className="mr-3">{icon}</View>
+        <View style={styles.iconWrap}>{icon}</View>
         <TextInput
-          className="flex-1 text-lg text-[#0b1c30] font-[Inter]"
+          style={styles.input}
           placeholder={placeholder}
-          placeholderTextColor="#6d7a77"
+          placeholderTextColor={COLORS.outline}
           value={value}
-          editable={false} // Se controla mediante el teclado virtual de la pantalla
+          editable={false}
           pointerEvents="none"
         />
       </TouchableOpacity>
     </View>
   );
 };
+
+const styles = StyleSheet.create({
+  wrapper: {
+    width: '100%',
+    gap: 6,
+  },
+  label: {
+    fontSize: 13,
+    fontWeight: '500',
+    color: COLORS.onSurfaceVariant,
+    paddingHorizontal: 4,
+    textTransform: 'uppercase',
+    letterSpacing: 1,
+    fontFamily: 'Inter',
+  },
+  inputRow: {
+    width: '100%',
+    height: 60,
+    backgroundColor: COLORS.surfaceContainerLow,
+    borderWidth: 1,
+    borderColor: COLORS.outlineVariant,
+    borderRadius: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 14,
+    gap: 12,
+  },
+  inputRowFocused: {
+    borderWidth: 2,
+    borderColor: COLORS.primary,
+    backgroundColor: COLORS.surfaceContainerLowest,
+    shadowColor: COLORS.primary,
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.15,
+    shadowRadius: 4,
+    elevation: 2,
+  },
+  iconWrap: {},
+  input: {
+    flex: 1,
+    fontSize: 17,
+    color: COLORS.onBackground,
+    fontFamily: 'Inter',
+  },
+});

@@ -3,7 +3,6 @@ import { StyleSheet, Text, View, TouchableOpacity } from 'react-native';
 import { MaterialIcons } from '@expo/vector-icons';
 import { COLORS } from '@/constants/colors';
 
-
 interface ServiceSection {
   id: string;
   title: string;
@@ -18,44 +17,48 @@ interface ServiceSectionCardProps {
 }
 
 export const ServiceSectionCard: React.FC<ServiceSectionCardProps> = ({ section, onDelete }) => {
-  // Mapeo dinámico de iconos basado en el título de la sección
   const getIconName = (title: string): keyof typeof MaterialIcons.glyphMap => {
     switch (title.toLowerCase()) {
       case 'sales': return 'sell';
       case 'support': return 'support-agent';
       case 'payments': return 'payments';
-      default: return 'business-center'; // <-- Cambiado "_" por "-"
+      default: return 'business-center';
     }
   };
 
-
   return (
-    <View style={styles.sectionItemCard}>
-      <View style={styles.sectionItemHeader}>
-        <View style={styles.sectionIconBadge}>
+    <View style={styles.card}>
+      <View style={styles.headerRow}>
+        <View style={styles.iconBadge}>
           <MaterialIcons name={getIconName(section.title)} size={20} color={COLORS.primary} />
         </View>
-        <TouchableOpacity onPress={() => onDelete(section.id)}>
+        <TouchableOpacity onPress={() => onDelete(section.id)} activeOpacity={0.7}>
           <MaterialIcons name="delete" size={20} color={COLORS.onSurfaceVariant} />
         </TouchableOpacity>
       </View>
-      
-      <Text style={styles.sectionItemTitle}>{section.title}</Text>
-      <Text style={styles.sectionItemDesc}>{section.description}</Text>
-      
-      <View style={styles.sectionFooterRow}>
+
+      <Text style={styles.sectionTitle}>{section.title}</Text>
+      <Text style={styles.sectionDesc}>{section.description}</Text>
+
+      <View style={styles.footer}>
         <View style={styles.avgBadge}>
-          <Text style={styles.avgBadgeText}>Avg. {section.avgTime}</Text>
+          <Text style={styles.avgText}>Avg. {section.avgTime}</Text>
         </View>
-        
-        <View style={styles.staffContainer}>
-          {section.staff.map((st, idx) => (
-            <View key={idx} style={[styles.staffAvatar, { marginLeft: idx === 0 ? 0 : -8 }]}>
-              <Text style={styles.staffAvatarText}>{st}</Text>
+
+        <View style={styles.staffRow}>
+          {section.staff.map((initials, idx) => (
+            <View
+              key={idx}
+              style={[
+                styles.staffAvatar,
+                { marginLeft: idx === 0 ? 0 : -8 },
+              ]}
+            >
+              <Text style={styles.staffText}>{initials}</Text>
             </View>
           ))}
-          <TouchableOpacity style={styles.addStaffBtn}>
-            <MaterialIcons name="person-add" size={16} color={COLORS.primary} />
+          <TouchableOpacity style={styles.addStaff}>
+            <MaterialIcons name="person-add" size={14} color={COLORS.primary} />
           </TouchableOpacity>
         </View>
       </View>
@@ -64,21 +67,21 @@ export const ServiceSectionCard: React.FC<ServiceSectionCardProps> = ({ section,
 };
 
 const styles = StyleSheet.create({
-  sectionItemCard: {
-    backgroundColor: '#fff',
+  card: {
+    backgroundColor: COLORS.surfaceContainerLowest,
     borderWidth: 1,
     borderColor: COLORS.outlineVariant,
     borderRadius: 12,
     padding: 14,
     marginBottom: 12,
   },
-  sectionItemHeader: {
+  headerRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 8,
+    marginBottom: 10,
   },
-  sectionIconBadge: {
+  iconBadge: {
     width: 36,
     height: 36,
     borderRadius: 8,
@@ -86,19 +89,21 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  sectionItemTitle: {
+  sectionTitle: {
     fontSize: 16,
     fontWeight: '700',
     color: COLORS.onSurface,
+    fontFamily: 'HankenGrotesk',
     marginBottom: 4,
   },
-  sectionItemDesc: {
+  sectionDesc: {
     fontSize: 13,
     color: COLORS.onSurfaceVariant,
+    fontFamily: 'Inter',
     lineHeight: 18,
-    marginBottom: 12,
+    marginBottom: 14,
   },
-  sectionFooterRow: {
+  footer: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
@@ -107,37 +112,39 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.surfaceContainerLow,
     borderWidth: 1,
     borderColor: COLORS.outlineVariant,
-    borderRadius: 4,
-    paddingHorizontal: 8,
+    borderRadius: 6,
+    paddingHorizontal: 10,
     paddingVertical: 4,
   },
-  avgBadgeText: {
+  avgText: {
     fontSize: 11,
     color: COLORS.onSurface,
+    fontFamily: 'Inter',
   },
-  staffContainer: {
+  staffRow: {
     flexDirection: 'row',
     alignItems: 'center',
   },
   staffAvatar: {
-    width: 26,
-    height: 26,
-    borderRadius: 13,
+    width: 28,
+    height: 28,
+    borderRadius: 14,
     backgroundColor: COLORS.secondaryContainer,
     borderWidth: 2,
-    borderColor: '#fff',
+    borderColor: COLORS.surfaceContainerLowest,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  staffAvatarText: {
+  staffText: {
     fontSize: 9,
     fontWeight: '700',
     color: COLORS.primary,
+    fontFamily: 'Inter',
   },
-  addStaffBtn: {
-    width: 26,
-    height: 26,
-    borderRadius: 13,
+  addStaff: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
     backgroundColor: COLORS.surfaceContainerLow,
     alignItems: 'center',
     justifyContent: 'center',

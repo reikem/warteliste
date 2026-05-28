@@ -1,6 +1,6 @@
-import { COLORS } from '@/constants/colors';
 import React from 'react';
 import { StyleSheet, Text, View, TextInput, Switch } from 'react-native';
+import { COLORS } from '@/constants/colors';
 
 interface BusinessHourRowProps {
   dayLabel: string;
@@ -18,19 +18,19 @@ export const BusinessHourRow: React.FC<BusinessHourRowProps> = ({
   onToggle,
 }) => {
   return (
-    <View style={styles.dayItem}>
-      <View style={styles.dayHeaderRow}>
+    <View style={styles.container}>
+      <View style={styles.headerRow}>
         <Text style={styles.dayName}>{dayLabel}</Text>
-        <Switch 
-          value={isActive} 
+        <Switch
+          value={isActive}
           onValueChange={onToggle}
-          trackColor={{ false: '#bcc9c6', true: COLORS.primary }}
-          thumbColor="#ffffff"
+          trackColor={{ false: COLORS.outlineVariant, true: COLORS.primary }}
+          thumbColor={COLORS.surfaceContainerLowest}
         />
       </View>
-      <View style={[styles.timeInputsRow, !isActive && { opacity: 0.4 }]}>
+      <View style={[styles.timeRow, !isActive && styles.disabled]}>
         <TextInput editable={isActive} style={styles.timeInput} value={fromTime} />
-        <Text style={styles.timeToText}>to</Text>
+        <Text style={styles.toText}>to</Text>
         <TextInput editable={isActive} style={styles.timeInput} value={toTime} />
       </View>
     </View>
@@ -38,43 +38,49 @@ export const BusinessHourRow: React.FC<BusinessHourRowProps> = ({
 };
 
 const styles = StyleSheet.create({
-  dayItem: {
+  container: {
     backgroundColor: COLORS.surfaceContainerLow,
-    borderRadius: 8,
-    padding: 12,
+    borderRadius: 10,
+    padding: 14,
     borderWidth: 1,
     borderColor: COLORS.outlineVariant,
     marginBottom: 12,
   },
-  dayHeaderRow: {
+  headerRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    marginBottom: 10,
+    marginBottom: 12,
   },
   dayName: {
     fontSize: 14,
     fontWeight: '600',
     color: COLORS.onSurface,
+    fontFamily: 'Inter',
   },
-  timeInputsRow: {
+  timeRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
   },
+  disabled: {
+    opacity: 0.4,
+  },
   timeInput: {
     flex: 1,
-    height: 38,
-    backgroundColor: '#fff',
+    height: 40,
+    backgroundColor: COLORS.surfaceContainerLowest,
     borderWidth: 1,
     borderColor: COLORS.outlineVariant,
-    borderRadius: 6,
+    borderRadius: 8,
     textAlign: 'center',
     fontSize: 13,
     color: COLORS.onSurface,
+    fontFamily: 'Inter',
   },
-  timeToText: {
+  toText: {
     fontSize: 13,
     color: COLORS.onSurfaceVariant,
+    fontFamily: 'Inter',
   },
 });

@@ -1,6 +1,7 @@
 import React from 'react';
-import { View, Text, Animated } from 'react-native';
-import { Bell, Countertop } from 'lucide-react-native';
+import { View, Text, Animated, StyleSheet } from 'react-native';
+import { Bell } from 'lucide-react-native';
+import { COLORS } from '@/constants/colors';
 
 interface NowServingCardProps {
   ticketNumber: string;
@@ -16,33 +17,109 @@ export const NowServingCard: React.FC<NowServingCardProps> = ({
   ticketOpacity,
 }) => {
   return (
-    <View className="w-full bg-white border border-[#bcc9c6] rounded-xl p-8 items-center shadow-sm relative overflow-hidden">
-      <View className="absolute top-0 left-0 right-0 h-1 bg-[#00685f]" />
-      
-      <View className="flex-row items-center gap-2 mb-2">
+    <View style={styles.card}>
+      {/* Top accent bar */}
+      <View style={styles.topBar} />
+
+      <View style={styles.headerRow}>
         <Animated.View style={{ transform: [{ scale: bellScale }] }}>
-          <Bell size={24} color="#00685f" fill="#00685f" />
+          <Bell size={24} color={COLORS.primary} fill={COLORS.primary} />
         </Animated.View>
-        <Text className="text-sm text-[#565e74] uppercase tracking-[0.2em] font-bold font-[HankenGrotesk]">
-          Now Serving
-        </Text>
+        <Text style={styles.label}>Now Serving</Text>
       </View>
-      
-      <Animated.View style={{ opacity: ticketOpacity }} className="mb-4">
-        <Text className="text-7xl font-bold text-[#00685f] tracking-tighter text-center font-[HankenGrotesk]">
-          {ticketNumber}
-        </Text>
+
+      <Animated.View style={[styles.ticketContainer, { opacity: ticketOpacity }]}>
+        <Text style={styles.ticketNumber}>{ticketNumber}</Text>
       </Animated.View>
-      
-      <View className="w-full items-center gap-3">
-        <Text className="text-base text-[#3d4947] font-[Inter]">Please proceed to:</Text>
-        <View className="bg-[#008378] px-10 py-3 rounded-xl flex-row items-center gap-4 shadow-sm">
-          <Countertop size={28} color="#f4fffc" />
-          <Text className="text-3xl font-bold text-[#f4fffc] font-[HankenGrotesk]">
-            {deskNumber}
-          </Text>
+
+      <View style={styles.deskSection}>
+        <Text style={styles.proceedText}>Please proceed to:</Text>
+        <View style={styles.deskBadge}>
+          <Text style={styles.deskText}>{deskNumber}</Text>
         </View>
       </View>
     </View>
   );
 };
+
+const styles = StyleSheet.create({
+  card: {
+    width: '100%',
+    backgroundColor: COLORS.surfaceContainerLowest,
+    borderWidth: 1,
+    borderColor: COLORS.outlineVariant,
+    borderRadius: 12,
+    padding: 28,
+    alignItems: 'center',
+    overflow: 'hidden',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 4,
+    elevation: 2,
+    // Pulse border effect approximated via border color
+    borderTopColor: COLORS.primary,
+    borderTopWidth: 2,
+  },
+  topBar: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    height: 3,
+    backgroundColor: COLORS.primary,
+  },
+  headerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 8,
+  },
+  label: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: COLORS.secondary,
+    textTransform: 'uppercase',
+    letterSpacing: 3,
+    fontFamily: 'HankenGrotesk',
+  },
+  ticketContainer: {
+    marginVertical: 16,
+  },
+  ticketNumber: {
+    fontSize: 80,
+    fontWeight: '700',
+    color: COLORS.primary,
+    letterSpacing: -2,
+    textAlign: 'center',
+    fontFamily: 'HankenGrotesk',
+    lineHeight: 88,
+  },
+  deskSection: {
+    width: '100%',
+    alignItems: 'center',
+    gap: 10,
+  },
+  proceedText: {
+    fontSize: 15,
+    color: COLORS.onSurfaceVariant,
+    fontFamily: 'Inter',
+  },
+  deskBadge: {
+    backgroundColor: COLORS.primaryContainer,
+    paddingHorizontal: 40,
+    paddingVertical: 12,
+    borderRadius: 12,
+    shadowColor: COLORS.primary,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  deskText: {
+    fontSize: 32,
+    fontWeight: '700',
+    color: COLORS.onPrimaryContainer,
+    fontFamily: 'HankenGrotesk',
+  },
+});

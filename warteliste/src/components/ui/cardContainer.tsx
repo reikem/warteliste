@@ -3,7 +3,6 @@ import { StyleSheet, Text, View, ViewStyle } from 'react-native';
 import { MaterialIcons } from '@expo/vector-icons';
 import { COLORS } from '@/constants/colors';
 
-
 interface CardContainerProps {
   title: string;
   icon: keyof typeof MaterialIcons.glyphMap;
@@ -12,21 +11,23 @@ interface CardContainerProps {
   style?: ViewStyle;
 }
 
-export const CardContainer: React.FC<CardContainerProps> = ({ 
-  title, 
-  icon, 
-  children, 
-  rightHeaderElement, 
-  style 
+export const CardContainer: React.FC<CardContainerProps> = ({
+  title,
+  icon,
+  children,
+  rightHeaderElement,
+  style,
 }) => {
   return (
     <View style={[styles.card, style]}>
-      <View style={styles.cardHeader}>
+      <View style={styles.header}>
         <View style={styles.headerLeft}>
-          <MaterialIcons name={icon} size={22} color={COLORS.primary} />
-          <Text style={styles.cardTitle}>{title}</Text>
+          <View style={styles.iconWrap}>
+            <MaterialIcons name={icon} size={20} color={COLORS.primary} />
+          </View>
+          <Text style={styles.title}>{title}</Text>
         </View>
-        {rightHeaderElement && rightHeaderElement}
+        {rightHeaderElement}
       </View>
       {children}
     </View>
@@ -47,7 +48,7 @@ const styles = StyleSheet.create({
     shadowRadius: 2,
     elevation: 2,
   },
-  cardHeader: {
+  header: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
@@ -56,11 +57,20 @@ const styles = StyleSheet.create({
   headerLeft: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
+    gap: 10,
   },
-  cardTitle: {
-    fontSize: 18,
+  iconWrap: {
+    width: 36,
+    height: 36,
+    borderRadius: 8,
+    backgroundColor: COLORS.surfaceContainerLow,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  title: {
+    fontSize: 17,
     fontWeight: '600',
     color: COLORS.onSurface,
+    fontFamily: 'HankenGrotesk',
   },
 });

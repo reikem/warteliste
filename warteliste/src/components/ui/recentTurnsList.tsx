@@ -1,6 +1,7 @@
 import React from 'react';
-import { ScrollView, View, Text } from 'react-native';
+import { ScrollView, View, Text, StyleSheet } from 'react-native';
 import { History } from 'lucide-react-native';
+import { COLORS } from '@/constants/colors';
 
 export interface Ticket {
   id: string;
@@ -13,28 +14,90 @@ interface RecentTurnsListProps {
 }
 
 export const RecentTurnsList: React.FC<RecentTurnsListProps> = ({ turns }) => {
-  const opacities = ['opacity-100', 'opacity-75', 'opacity-50', 'opacity-30'];
+  const opacities = [1, 0.75, 0.5, 0.3];
 
   return (
-    <View className="w-full bg-white border border-[#bcc9c6] rounded-lg p-4 shadow-sm">
-      <View className="flex-row items-center gap-2 mb-3">
-        <History size={18} color="#3d4947" />
-        <Text className="text-[13px] font-bold text-[#3d4947] uppercase tracking-widest font-[Inter]">
-          Recent Turns
-        </Text>
+    <View style={styles.container}>
+      <View style={styles.header}>
+        <History size={18} color={COLORS.onSurfaceVariant} />
+        <Text style={styles.title}>Recent Turns</Text>
       </View>
-      
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 16 }}>
+
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        contentContainerStyle={styles.scroll}
+      >
         {turns.map((turn, index) => (
-          <View 
-            key={turn.id} 
-            className={`bg-[#eff4ff] px-6 py-3 rounded-lg border border-[#bcc9c6] items-center min-w-[110px] ${opacities[index] || 'opacity-25'}`}
+          <View
+            key={turn.id}
+            style={[
+              styles.turnCard,
+              { opacity: opacities[index] ?? 0.2 },
+            ]}
           >
-            <Text className="font-bold text-[#00685f] text-lg font-[HankenGrotesk]">{turn.number}</Text>
-            <Text className="text-xs font-medium text-[#3d4947] font-[Inter]">{turn.desk}</Text>
+            <Text style={styles.turnNumber}>{turn.number}</Text>
+            <Text style={styles.turnDesk}>{turn.desk}</Text>
           </View>
         ))}
       </ScrollView>
     </View>
   );
 };
+
+const styles = StyleSheet.create({
+  container: {
+    width: '100%',
+    backgroundColor: COLORS.surfaceContainerLowest,
+    borderWidth: 1,
+    borderColor: COLORS.outlineVariant,
+    borderRadius: 10,
+    padding: 16,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.04,
+    shadowRadius: 2,
+    elevation: 1,
+  },
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 12,
+  },
+  title: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: COLORS.onSurfaceVariant,
+    textTransform: 'uppercase',
+    letterSpacing: 2,
+    fontFamily: 'Inter',
+  },
+  scroll: {
+    gap: 12,
+    paddingRight: 8,
+  },
+  turnCard: {
+    backgroundColor: COLORS.surfaceContainerLow,
+    paddingHorizontal: 20,
+    paddingVertical: 12,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: COLORS.outlineVariant,
+    alignItems: 'center',
+    minWidth: 100,
+  },
+  turnNumber: {
+    fontWeight: '700',
+    color: COLORS.primary,
+    fontSize: 17,
+    fontFamily: 'HankenGrotesk',
+  },
+  turnDesk: {
+    fontSize: 12,
+    fontWeight: '500',
+    color: COLORS.onSurfaceVariant,
+    fontFamily: 'Inter',
+    marginTop: 2,
+  },
+});
