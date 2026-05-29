@@ -17,6 +17,7 @@ import {
   LoginResult,
   RegisterInput,
 } from '../service/authservice';
+import * as SecureStore from 'expo-secure-store';
 import { initializeDatabase, resetDatabase } from '../service/database';
 
 // ─── Tipos del contexto ───────────────────────────────────────────────────────
@@ -44,23 +45,48 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   // Inicializar BD y restaurar sesión al arrancar
   useEffect(() => {
+    let cancelled = false;
+  
     async function bootstrap() {
       try {
-       // await resetDatabase()
+        const fixed = await SecureStore.getItemAsync('db_hash_fixed_v4');
+        if (!fixed) {
+          await resetDatabase();
+          await SecureStore.setItemAsync('db_hash_fixed_v4', '1');
+        }
         await initializeDatabase();
-        setDbReady(true);
-
+        if (!cancelled) setDbReady(true);
         const restored = await restoreSession();
-        if (restored) {
+        if (!cancelled) {
           setUser(restored);
+          setIsLoading(false);
         }
       } catch (e) {
-        console.error('[Auth] Error al inicializar:', e);
-      } finally {
-        setIsLoading(false);
+        console.error('[Auth] bootstrap error:', e);
+        if (!cancelled) setIsLoading(false);
       }
     }
+  //**  Esto usar cuando la función resetDatabase ya no hace initialize, para evitar doble inicialización
+  //async function bootstrap() {
+  //  try {
+   //   console.log('[Auth] bootstrap iniciado');
+    //  await resetDatabase();        // solo resetea, no inicializa
+     // console.log('[Auth] Reset completado');
+     // await initializeDatabase();   // una sola vez aquí
+     // if (!cancelled) setDbReady(true);
+      //const restored = await restoreSession();
+      //if (!cancelled) {
+       // setUser(restored);
+        //setIsLoading(false);
+     // }
+   // } catch (e) {
+     // console.error('[Auth] bootstrap error:', e);
+      //if (!cancelled) setIsLoading(false);
+   // }
+ // }
+  //  */
     bootstrap();
+    return () => { cancelled = true; };
   }, []);
 
   const login = useCallback(async (email: string, password: string): Promise<LoginResult> => {

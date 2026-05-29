@@ -14,10 +14,10 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ticket, User, Mail, CheckCircle2, ChevronRight, LogOut } from 'lucide-react-native';
 import { router } from 'expo-router';
-import { useAuth } from '../../service/authContext';
 import { COLORS } from '../constants/colors';
 import { getServiceSections, createTicket } from '../../service/queueservice';
 import type { ServiceSection } from '../../service/database';
+import { useAuth } from '../../store/authcontext';
 
 // Guardar el último ticket creado para que printPreview lo lea
 export let lastCreatedTicket: {

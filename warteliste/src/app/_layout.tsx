@@ -10,8 +10,8 @@ import { useColorScheme, ActivityIndicator, View } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
 import { LayoutDashboard, Printer, Home, Tv, Monitor, Settings } from 'lucide-react-native';
-import { AuthProvider, useAuth } from '../../service/authContext';
 import { COLORS } from '../constants/colors';
+import { AuthProvider, useAuth } from '../../store/authcontext';
 
 // ─── Ruta inicial según rol ───────────────────────────────────────────────────
 

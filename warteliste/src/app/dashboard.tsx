@@ -11,7 +11,6 @@ import { View, Text, ScrollView, TouchableOpacity, StyleSheet, Alert, ActivityIn
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Grid, RotateCcw, CheckCircle2, UserX, LogOut } from 'lucide-react-native';
 import { router } from 'expo-router';
-import { useAuth } from '../../service/authContext';
 import { COLORS } from '../constants/colors';
 import {
   getWaitingQueue,
@@ -24,6 +23,7 @@ import {
 } from '../../service/queueservice';
 import { bus, EVENTS } from '../../service/eventBus';
 import type { Queue } from '../../service/database';
+import { useAuth } from '../../store/authcontext';
 
 export default function EmployeeDashboard() {
   const { user, logout } = useAuth();

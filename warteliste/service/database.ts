@@ -231,7 +231,10 @@ async function seedDefaultUsers(db: SQLite.SQLiteDatabase) {
 
   // Importar la función real de hash para que coincida con el login
   const hash = await hashPassword('admin123');
-
+// DEBUG TEMPORAL
+console.log('=== DEBUG SEED ===');
+console.log('Hash generado en seed:', hash);
+console.log('==================');
   const users: [string, string, UserRole, string][] = [
     ['admin@queuemaster.com',    'Administrador',   'admin',    'Station 01'],
     ['marcus@queuemaster.com',   'Marcus Johnson',  'employee', 'Station 04'],
@@ -294,7 +297,8 @@ export async function resetDatabase(): Promise<void> {
   db.execSync(`DROP TABLE IF EXISTS service_sections;`);
   db.execSync(`DROP TABLE IF EXISTS system_config;`);
   db.execSync(`DROP TABLE IF EXISTS users;`);
+  db.closeSync(); // ← agrega esto para cerrar limpiamente
   _db = null;
-  await initializeDatabase();
-  console.log('[DB] ✅ Base de datos reseteada y re-inicializada.');
+  // ← elimina el await initializeDatabase() que estaba aquí
+  console.log('[DB] ✅ Base de datos reseteada.');
 }

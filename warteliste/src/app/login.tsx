@@ -11,8 +11,8 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Eye, EyeOff, LogIn, Grid, ShieldCheck } from 'lucide-react-native';
 import { router } from 'expo-router';
-import { useAuth } from '../../service/authContext';
 import { COLORS } from '../constants/colors';
+import { useAuth } from '../../store/authcontext';
 
 const DEMO_USERS = [
   { role: 'Admin',    email: 'admin@queuemaster.com',     color: COLORS.primary,          label: 'ADM' },

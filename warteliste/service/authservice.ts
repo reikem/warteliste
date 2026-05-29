@@ -3,7 +3,6 @@
  * Ubicación: service/authservice.ts
  */
 
-import * as Crypto from 'expo-crypto';
 import * as SecureStore from 'expo-secure-store';
 import { getDatabase, User, UserRole } from './database';
 import { generateToken, hashPassword } from './crypto';
@@ -71,6 +70,13 @@ export async function login(email: string, password: string): Promise<LoginResul
 
     if (!user) return { success: false, error: 'Usuario no encontrado o inactivo.' };
     if (user.password_hash !== hash) {
+        console.log('=== DEBUG LOGIN ===');
+console.log('Email ingresado:', email.trim());
+console.log('Hash generado en login:', hash);
+console.log('Hash guardado en BD:', user?.password_hash);
+console.log('¿Coinciden?', user?.password_hash === hash);
+console.log('User encontrado:', JSON.stringify(user));
+console.log('==================');
       logAudit('LOGIN_FAILED', 'users', undefined, user.id, email);
       return { success: false, error: 'Contraseña incorrecta.' };
     }
