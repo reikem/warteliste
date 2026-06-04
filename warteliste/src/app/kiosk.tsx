@@ -1,73 +1,196 @@
 /**
- * QueueMaster Pro — Kiosco (Usuario kiosk)
- * 1. Selecciona sección de servicio
- * 2. Ingresa nombre y contacto
- * 3. Genera ticket real en SQLite
- * 4. Navega a printPreview con los datos del ticket
+ * QueueMaster Pro — Kiosco
+ * INTEGRACIÓN:
+ *   + Tickets prioritarios: selector de tipo (normal / senior / vip / urgent)
+ *   + Contador en tiempo real: personas adelante y espera estimada en Step 1
+ *   + Reset completo al volver de printPreview
+ *
+ * Ubicación: app/(tabs)/kiosk.tsx
  */
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   View, Text, ScrollView, TouchableOpacity,
   StyleSheet, Alert, ActivityIndicator, TextInput,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Ticket, User, Mail, CheckCircle2, ChevronRight, LogOut } from 'lucide-react-native';
+import {
+  Ticket, User, Mail, CheckCircle2,
+  ChevronRight, LogOut, Star, ShieldAlert, Accessibility,
+} from 'lucide-react-native';
 import { router } from 'expo-router';
 import { COLORS } from '../constants/colors';
-import { getServiceSections, createTicket } from '../../service/queueservice';
+import { getServiceSections, getQueueStats } from '../../service/queueservice';
+import { createPriorityTicket, type TicketPriority } from '../../service/priorityQueue';
+import { bus, EVENTS } from '../../service/eventBus';
 import type { ServiceSection } from '../../service/database';
 import { useAuth } from '../../store/authcontext';
 
-// Guardar el último ticket creado para que printPreview lo lea
-export let lastCreatedTicket: {
-  ticketNumber: string;
-  customerName: string;
-  sectionTitle: string;
+// ─── Exportado para printPreview ──────────────────────────────────────────────
+
+export interface LastTicketData {
+  companySlug:   string;
+  companyName:   string;
+  ticketId:      number;
+  ticketNumber:  string;
+  customerName:  string;
+  sectionTitle:  string;
+  sectionId:     number;
+  avgTime:       number;
+  priority:      TicketPriority;
   estimatedWait: string;
-  timestamp: string;
-} | null = null;
+  timestamp:     string;
+}
+
+export let lastCreatedTicket: LastTicketData | null = null;
+
+// ─── Tipos de prioridad ───────────────────────────────────────────────────────
+
+interface PriorityOption {
+  value: TicketPriority;
+  label: string;
+  desc:  string;
+  icon:  React.ReactNode;
+  color: string;
+  bg:    string;
+}
+
+const PRIORITY_OPTIONS: PriorityOption[] = [
+  {
+    value: 'normal',
+    label: 'Normal',
+    desc:  'Atención estándar',
+    icon:  <CheckCircle2 size={18} color="#00685f" />,
+    color: '#00685f',
+    bg:    '#e0f2ef',
+  },
+  {
+    value: 'senior',
+    label: 'Adulto mayor / discapacidad',
+    desc:  'Atención preferencial',
+    icon:  <Accessibility size={18} color="#1e40af" />,
+    color: '#1e40af',
+    bg:    '#dbeafe',
+  },
+  {
+    value: 'vip',
+    label: 'VIP',
+    desc:  'Cliente prioritario',
+    icon:  <Star size={18} color="#78350f" />,
+    color: '#78350f',
+    bg:    '#fef3c7',
+  },
+  {
+    value: 'urgent',
+    label: 'Urgente',
+    desc:  'Emergencia / caso médico',
+    icon:  <ShieldAlert size={18} color="#b91c1c" />,
+    color: '#b91c1c',
+    bg:    '#fef2f2',
+  },
+];
+
+// ─── Componente principal ─────────────────────────────────────────────────────
 
 export default function KioskScreen() {
   const { logout } = useAuth();
 
-  const [step, setStep]               = useState<'section' | 'form'>('section');
-  const [sections, setSections]       = useState<ServiceSection[]>([]);
-  const [selectedSection, setSection] = useState<ServiceSection | null>(null);
-  const [fullName, setFullName]       = useState('');
-  const [contact, setContact]         = useState('');
-  const [loading, setLoading]         = useState(false);
-  const [nameError, setNameError]     = useState('');
+  const [sections, setSections]   = useState<ServiceSection[]>([]);
+  const [waitCounts, setWaiting]  = useState<Record<number, number>>({});
+  const [step, setStep]           = useState<'section' | 'form'>('section');
+  const [selected, setSelected]   = useState<ServiceSection | null>(null);
+  const [fullName, setFullName]   = useState('');
+  const [contact, setContact]     = useState('');
+  const [priority, setPriority]   = useState<TicketPriority>('normal');
+  const [nameError, setNameError] = useState('');
+  const [loading, setLoading]     = useState(false);
 
-  useEffect(() => {
-    setSections(getServiceSections());
+  // ── Cargar secciones y conteos de espera ──────────────────────────────────
+
+  const loadData = useCallback(() => {
+    const secs = getServiceSections();
+    setSections(secs);
+    // Conteo individual por sección para mostrar en los cards
+    const counts: Record<number, number> = {};
+    secs.forEach(s => {
+      try {
+        const { waiting } = getQueueStats();
+        counts[s.id] = waiting;
+      } catch { counts[s.id] = 0; }
+    });
+    setWaiting(counts);
   }, []);
 
+  useEffect(() => {
+    loadData();
+    resetForm();
+    // Actualizar conteos cuando la cola cambie
+    const unsub = bus.on(EVENTS.QUEUE_UPDATED, loadData);
+    return unsub;
+  }, [loadData]);
+
+  // ── Reset completo ────────────────────────────────────────────────────────
+
+  const resetForm = () => {
+    setStep('section');
+    setSelected(null);
+    setFullName('');
+    setContact('');
+    setPriority('normal');
+    setNameError('');
+    lastCreatedTicket = null;
+  };
+
+  // ── Navegación entre pasos ────────────────────────────────────────────────
+
   const handleSelectSection = (section: ServiceSection) => {
-    setSection(section);
+    setSelected(section);
     setStep('form');
   };
 
+  const handleBack = () => {
+    setStep('section');
+    setSelected(null);
+    setFullName('');
+    setContact('');
+    setPriority('normal');
+    setNameError('');
+  };
+
+  // ── Crear ticket ──────────────────────────────────────────────────────────
+
   const handleRegister = async () => {
     if (!fullName.trim()) { setNameError('El nombre es obligatorio.'); return; }
-    if (!selectedSection) return;
+    if (!selected) return;
     setLoading(true);
     try {
-      const ticket = createTicket(fullName.trim(), selectedSection.id, contact.trim() || undefined);
+      const ticket = createPriorityTicket(
+        fullName.trim(),
+        selected.id,
+        priority,
+        contact.trim() || undefined,
+      );
       if (!ticket) throw new Error('No se pudo crear el ticket.');
 
       const now = new Date();
-      const timestamp = `${now.toLocaleDateString('es-MX')} - ${now.toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}`;
+      const timestamp = `${now.toLocaleDateString('es-MX')} - ${now.toLocaleTimeString('es-MX', {
+        hour: '2-digit', minute: '2-digit', second: '2-digit',
+      })}`;
 
       lastCreatedTicket = {
-        ticketNumber: ticket.ticket_number,
-        customerName: fullName.trim(),
-        sectionTitle: selectedSection.title,
-        estimatedWait: `${selectedSection.avg_time_minutes} min`,
+        companySlug:   'warteliste',   // TODO: leer de AuthContext
+        companyName:   'Sucursal Central',
+        ticketId:      ticket.id,
+        ticketNumber:  ticket.ticket_number,
+        customerName:  fullName.trim(),
+        sectionTitle:  selected.title,
+        sectionId:     selected.id,
+        avgTime:       selected.avg_time_minutes,
+        priority,
+        estimatedWait: `${selected.avg_time_minutes} min`,
         timestamp,
       };
 
-      // Navegar a la previsualización del ticket
       router.push('/printPreview');
     } catch (e: any) {
       Alert.alert('Error', e.message ?? 'No se pudo generar el ticket.');
@@ -76,24 +199,21 @@ export default function KioskScreen() {
     }
   };
 
-  const handleBack = () => {
-    if (step === 'form') {
-      setStep('section');
-      setFullName('');
-      setContact('');
-      setNameError('');
-    }
-  };
-
   const handleLogout = () => {
     Alert.alert('Salir', '¿Cerrar esta sesión de kiosco?', [
       { text: 'Cancelar', style: 'cancel' },
-      { text: 'Salir', style: 'destructive', onPress: async () => { await logout(); router.replace('/login'); } },
+      {
+        text: 'Salir', style: 'destructive',
+        onPress: async () => { await logout(); router.replace('/login'); },
+      },
     ]);
   };
 
+  // ─── RENDER ───────────────────────────────────────────────────────────────
+
   return (
     <SafeAreaView style={styles.root} edges={['top', 'bottom']}>
+
       {/* HEADER */}
       <View style={styles.header}>
         <View style={styles.headerLeft}>
@@ -105,57 +225,95 @@ export default function KioskScreen() {
         </TouchableOpacity>
       </View>
 
-      <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
+      <ScrollView
+        contentContainerStyle={styles.scroll}
+        showsVerticalScrollIndicator={false}
+        keyboardShouldPersistTaps="handled"
+      >
 
-        {/* PASO 1: Seleccionar sección */}
+        {/* ── PASO 1: Seleccionar sección ──────────────────────────────────── */}
         {step === 'section' && (
           <View style={styles.inner}>
             <View style={styles.stepHeader}>
               <Text style={styles.stepTitle}>¿Qué servicio necesitas?</Text>
-              <Text style={styles.stepSub}>Selecciona la sección que corresponde a tu trámite</Text>
+              <Text style={styles.stepSub}>
+                Selecciona la sección que corresponde a tu trámite
+              </Text>
             </View>
 
             {sections.length === 0 ? (
               <View style={styles.noSections}>
-                <Text style={styles.noSectionsText}>No hay secciones disponibles.\nContacta al administrador.</Text>
+                <Text style={styles.noSectionsText}>
+                  No hay secciones disponibles.{'\n'}Contacta al administrador.
+                </Text>
               </View>
             ) : (
-              sections.map(section => (
-                <TouchableOpacity
-                  key={section.id}
-                  style={styles.sectionCard}
-                  onPress={() => handleSelectSection(section)}
-                  activeOpacity={0.85}
-                >
-                  <View style={[styles.sectionDot, { backgroundColor: section.color }]} />
-                  <View style={styles.sectionInfo}>
-                    <Text style={styles.sectionTitle}>{section.title}</Text>
-                    <Text style={styles.sectionDesc}>{section.description}</Text>
-                    <Text style={styles.sectionTime}>⏱ Tiempo estimado: {section.avg_time_minutes} min</Text>
-                  </View>
-                  <View style={[styles.prefixBadge, { backgroundColor: section.color + '22' }]}>
-                    <Text style={[styles.prefixText, { color: section.color }]}>{section.prefix}</Text>
-                  </View>
-                  <ChevronRight size={20} color={COLORS.outline} />
-                </TouchableOpacity>
-              ))
+              sections.map(section => {
+                const ahead = waitCounts[section.id] ?? 0;
+                const estWait = ahead * section.avg_time_minutes;
+                return (
+                  <TouchableOpacity
+                    key={section.id}
+                    style={styles.sectionCard}
+                    onPress={() => handleSelectSection(section)}
+                    activeOpacity={0.85}
+                  >
+                    <View style={[styles.sectionDot, { backgroundColor: section.color }]} />
+                    <View style={styles.sectionInfo}>
+                      <Text style={styles.sectionTitle}>{section.title}</Text>
+                      <Text style={styles.sectionDesc}>{section.description}</Text>
+                      {/* Contador en tiempo real */}
+                      <View style={styles.sectionMeta}>
+                        <Text style={styles.sectionTime}>
+                          ⏱ {section.avg_time_minutes} min / turno
+                        </Text>
+                        <View style={[
+                          styles.waitPill,
+                          { backgroundColor: ahead === 0 ? '#dcfce7' : ahead <= 3 ? '#fef3c7' : '#fef2f2' },
+                        ]}>
+                          <Text style={[
+                            styles.waitPillText,
+                            { color: ahead === 0 ? '#166534' : ahead <= 3 ? '#78350f' : '#b91c1c' },
+                          ]}>
+                            {ahead === 0
+                              ? '¡Sin espera!'
+                              : `${ahead} esperando · ~${estWait}m`}
+                          </Text>
+                        </View>
+                      </View>
+                    </View>
+                    <View style={[styles.prefixBadge, { backgroundColor: section.color + '22' }]}>
+                      <Text style={[styles.prefixText, { color: section.color }]}>
+                        {section.prefix}
+                      </Text>
+                    </View>
+                    <ChevronRight size={20} color={COLORS.outline} />
+                  </TouchableOpacity>
+                );
+              })
             )}
           </View>
         )}
 
-        {/* PASO 2: Formulario */}
-        {step === 'form' && selectedSection && (
+        {/* ── PASO 2: Formulario ───────────────────────────────────────────── */}
+        {step === 'form' && selected && (
           <View style={styles.inner}>
             <View style={styles.stepHeader}>
-              <View style={[styles.selectedBadge, { backgroundColor: selectedSection.color + '22', borderColor: selectedSection.color + '44' }]}>
-                <View style={[styles.sectionDot, { backgroundColor: selectedSection.color, width: 10, height: 10 }]} />
-                <Text style={[styles.selectedBadgeText, { color: selectedSection.color }]}>{selectedSection.title}</Text>
+              <View style={[
+                styles.selectedBadge,
+                { backgroundColor: selected.color + '22', borderColor: selected.color + '44' },
+              ]}>
+                <View style={[styles.sectionDot, { backgroundColor: selected.color, width: 10, height: 10 }]} />
+                <Text style={[styles.selectedBadgeText, { color: selected.color }]}>
+                  {selected.title}
+                </Text>
               </View>
               <Text style={styles.stepTitle}>Ingresa tus datos</Text>
               <Text style={styles.stepSub}>Te notificaremos cuando sea tu turno</Text>
             </View>
 
             <View style={styles.formCard}>
+
               {/* Nombre */}
               <View style={styles.fieldGroup}>
                 <Text style={styles.fieldLabel}>Nombre Completo *</Text>
@@ -174,7 +332,7 @@ export default function KioskScreen() {
                 {!!nameError && <Text style={styles.fieldError}>{nameError}</Text>}
               </View>
 
-              {/* Contacto (opcional) */}
+              {/* Contacto */}
               <View style={styles.fieldGroup}>
                 <Text style={styles.fieldLabel}>Teléfono o Correo (opcional)</Text>
                 <View style={styles.inputRow}>
@@ -193,11 +351,55 @@ export default function KioskScreen() {
                 </View>
               </View>
 
+              {/* ── Tipo de prioridad ── */}
+              <View style={styles.fieldGroup}>
+                <Text style={styles.fieldLabel}>Tipo de atención</Text>
+                <View style={styles.priorityGrid}>
+                  {PRIORITY_OPTIONS.map(opt => (
+                    <TouchableOpacity
+                      key={opt.value}
+                      style={[
+                        styles.priorityOption,
+                        priority === opt.value && {
+                          borderColor: opt.color,
+                          backgroundColor: opt.bg,
+                        },
+                      ]}
+                      onPress={() => setPriority(opt.value)}
+                      activeOpacity={0.8}
+                    >
+                      {opt.icon}
+                      <View style={{ flex: 1 }}>
+                        <Text style={[
+                          styles.priorityLabel,
+                          priority === opt.value && { color: opt.color },
+                        ]}>
+                          {opt.label}
+                        </Text>
+                        <Text style={styles.priorityDesc}>{opt.desc}</Text>
+                      </View>
+                      {priority === opt.value && (
+                        <View style={[styles.priorityCheck, { backgroundColor: opt.color }]}>
+                          <CheckCircle2 size={12} color="#fff" />
+                        </View>
+                      )}
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              </View>
+
               {/* Info */}
               <View style={styles.infoBox}>
                 <Text style={styles.infoText}>
-                  📋 Se generará un ticket para <Text style={{ fontWeight: '700' }}>{selectedSection.title}</Text>.
-                  Tiempo estimado de espera: <Text style={{ fontWeight: '700' }}>{selectedSection.avg_time_minutes} min</Text>.
+                  📋 Ticket para{' '}
+                  <Text style={{ fontWeight: '700' }}>{selected.title}</Text>
+                  {' '}· Tiempo est.:{' '}
+                  <Text style={{ fontWeight: '700' }}>{selected.avg_time_minutes} min</Text>
+                  {priority !== 'normal' && (
+                    <Text style={{ fontWeight: '700', color: PRIORITY_OPTIONS.find(p=>p.value===priority)?.color }}>
+                      {' '}· Prioridad: {PRIORITY_OPTIONS.find(p=>p.value===priority)?.label}
+                    </Text>
+                  )}
                 </Text>
               </View>
             </View>
@@ -214,13 +416,14 @@ export default function KioskScreen() {
                 disabled={loading}
                 activeOpacity={0.85}
               >
-                {loading
-                  ? <ActivityIndicator color={COLORS.onPrimary} />
-                  : <>
-                      <CheckCircle2 size={20} color={COLORS.onPrimary} />
-                      <Text style={styles.confirmBtnText}>Generar Ticket</Text>
-                    </>
-                }
+                {loading ? (
+                  <ActivityIndicator color={COLORS.onPrimary} />
+                ) : (
+                  <>
+                    <CheckCircle2 size={20} color={COLORS.onPrimary} />
+                    <Text style={styles.confirmBtnText}>Generar Ticket</Text>
+                  </>
+                )}
               </TouchableOpacity>
             </View>
           </View>
@@ -229,6 +432,8 @@ export default function KioskScreen() {
     </SafeAreaView>
   );
 }
+
+// ─── Estilos ──────────────────────────────────────────────────────────────────
 
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: COLORS.background },
@@ -254,6 +459,8 @@ const styles = StyleSheet.create({
   selectedBadgeText: { fontSize: 13, fontWeight: '700' },
   noSections: { padding: 40, alignItems: 'center' },
   noSectionsText: { textAlign: 'center', fontSize: 15, color: COLORS.onSurfaceVariant, lineHeight: 22 },
+
+  // Sección card
   sectionCard: {
     flexDirection: 'row', alignItems: 'center', gap: 14,
     backgroundColor: COLORS.surfaceContainerLowest,
@@ -262,19 +469,27 @@ const styles = StyleSheet.create({
     shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.04, shadowRadius: 2, elevation: 1,
   },
   sectionDot: { width: 14, height: 14, borderRadius: 7 },
-  sectionInfo: { flex: 1, gap: 2 },
+  sectionInfo: { flex: 1, gap: 4 },
   sectionTitle: { fontSize: 17, fontWeight: '700', color: COLORS.onBackground },
   sectionDesc: { fontSize: 13, color: COLORS.onSurfaceVariant },
-  sectionTime: { fontSize: 12, color: COLORS.primary, marginTop: 2 },
+  sectionMeta: { flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginTop: 2 },
+  sectionTime: { fontSize: 12, color: COLORS.primary },
+  waitPill: { paddingHorizontal: 8, paddingVertical: 2, borderRadius: 999 },
+  waitPillText: { fontSize: 11, fontWeight: '700' },
   prefixBadge: { width: 40, height: 40, borderRadius: 10, alignItems: 'center', justifyContent: 'center' },
   prefixText: { fontSize: 18, fontWeight: '700' },
+
+  // Form
   formCard: {
     backgroundColor: COLORS.surfaceContainerLowest,
     borderRadius: 14, padding: 20, gap: 16,
     borderWidth: 1, borderColor: COLORS.outlineVariant,
   },
   fieldGroup: { gap: 6 },
-  fieldLabel: { fontSize: 12, fontWeight: '700', color: COLORS.onSurfaceVariant, textTransform: 'uppercase', letterSpacing: 0.5 },
+  fieldLabel: {
+    fontSize: 12, fontWeight: '700', color: COLORS.onSurfaceVariant,
+    textTransform: 'uppercase', letterSpacing: 0.5,
+  },
   inputRow: {
     flexDirection: 'row', alignItems: 'center', gap: 10,
     height: 52, paddingHorizontal: 14,
@@ -284,6 +499,22 @@ const styles = StyleSheet.create({
   inputError: { borderColor: COLORS.error },
   input: { flex: 1, fontSize: 15, color: COLORS.onSurface },
   fieldError: { fontSize: 12, color: COLORS.error },
+
+  // Prioridad
+  priorityGrid: { gap: 8 },
+  priorityOption: {
+    flexDirection: 'row', alignItems: 'center', gap: 10,
+    padding: 12, borderRadius: 10,
+    borderWidth: 1.5, borderColor: COLORS.outlineVariant,
+    backgroundColor: COLORS.surfaceContainerLow,
+  },
+  priorityLabel: { fontSize: 13, fontWeight: '700', color: COLORS.onBackground },
+  priorityDesc: { fontSize: 11, color: COLORS.onSurfaceVariant, marginTop: 1 },
+  priorityCheck: {
+    width: 20, height: 20, borderRadius: 10,
+    alignItems: 'center', justifyContent: 'center',
+  },
+
   infoBox: {
     backgroundColor: COLORS.surfaceContainerLow,
     borderRadius: 10, padding: 14,
@@ -302,7 +533,8 @@ const styles = StyleSheet.create({
     flex: 2, height: 54, borderRadius: 12,
     backgroundColor: COLORS.primary,
     flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8,
-    shadowColor: COLORS.primary, shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.25, shadowRadius: 6, elevation: 4,
+    shadowColor: COLORS.primary, shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.25, shadowRadius: 6, elevation: 4,
   },
   confirmBtnText: { fontSize: 16, fontWeight: '700', color: COLORS.onPrimary },
 });

@@ -1,293 +1,150 @@
 /**
- * Warteliste — Monitor
- * + Widget de clima real (Open-Meteo API, sin API key)
- * + Carrusel automático de fotos/videos subidos desde Setup
+ * QueueMaster Pro — Monitor
+ * INTEGRACIÓN:
+ *   + useMonitorSound: beep / campanilla / voz / silencio
+ *   + Badge de prioridad visible al llamar (urgent/vip/senior)
+ *   + Historial incluye calling + serving + completed (FIX previo)
+ *   + Selector de tipo de sonido persistente en UI
+ *
+ * Ubicación: app/(tabs)/monitor.tsx
  */
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
-  View, Text, ScrollView, TouchableOpacity, Animated,
-  Easing, Dimensions, StyleSheet, Alert, Image,
+  View, Text, ScrollView, TouchableOpacity,
+  Animated, Easing, Dimensions, StyleSheet, Alert,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { LogOut, Wifi, WifiOff } from 'lucide-react-native';
+import { LogOut, Volume2, VolumeX, Music, Mic } from 'lucide-react-native';
 import { router } from 'expo-router';
 import { COLORS } from '../constants/colors';
-import { getRecentCompleted, getQueueStats, getSystemConfig } from '../../service/queueservice';
-import { bus, EVENTS, TicketCalledPayload, TicketCreatedPayload } from '../../service/eventBus';
-import type { Queue } from '../../service/database';
+import { getQueueStats, getSystemConfig } from '../../service/queueservice';
+import { getDatabase } from '../../service/database';
+import { bus, EVENTS, type TicketCalledPayload } from '../../service/eventBus';
+import {
+  PRIORITY_LABELS, PRIORITY_ICONS, type TicketPriority,
+} from '../../service/priorityQueue';
 import { useAuth } from '../../store/authcontext';
-import type { MediaItem } from './queueMasterSetupScreen';
+import { SoundType, useMonitorSound } from '@/hooks/useMonitorSound';
 
 const { width: SW } = Dimensions.get('window');
 
-// ─── Ciudades (deben coincidir con Setup) ─────────────────────────────────────
+// ─── Colores prioridad ────────────────────────────────────────────────────────
 
-const WEATHER_CITIES: Record<string, { lat: number; lon: number; label: string }> = {
-  mexico_cdmx:    { lat: 19.4326,  lon: -99.1332,  label: 'CDMX' },
-  spain_madrid:   { lat: 40.4168,  lon: -3.7038,   label: 'Madrid' },
-  argentina_ba:   { lat: -34.6037, lon: -58.3816,  label: 'Bs. Aires' },
-  colombia_bogota:{ lat: 4.7110,   lon: -74.0721,  label: 'Bogotá' },
-  chile_santiago: { lat: -33.4489, lon: -70.6693,  label: 'Santiago' },
-  chile_vina:     { lat: -33.0245, lon: -71.5518,  label: 'Viña del Mar' },
-  peru_lima:      { lat: -12.0464, lon: -77.0428,  label: 'Lima' },
-  usa_ny:         { lat: 40.7128,  lon: -74.0060,  label: 'New York' },
-  usa_miami:      { lat: 25.7617,  lon: -80.1918,  label: 'Miami' },
+const PRIO_COLORS: Record<TicketPriority, { bg: string; text: string }> = {
+  urgent: { bg: '#fef2f2', text: '#b91c1c' },
+  vip:    { bg: '#fef3c7', text: '#78350f' },
+  senior: { bg: '#dbeafe', text: '#1e3a8a' },
+  normal: { bg: COLORS.primaryContainer, text: COLORS.onPrimaryContainer },
 };
 
-// WMO weather code → emoji + descripción
-function weatherCodeToInfo(code: number): { icon: string; desc: string } {
-  if (code === 0)              return { icon: '☀️',  desc: 'Despejado' };
-  if (code <= 2)               return { icon: '⛅',  desc: 'Parcial' };
-  if (code === 3)              return { icon: '☁️',  desc: 'Nublado' };
-  if (code <= 49)              return { icon: '🌫️', desc: 'Neblina' };
-  if (code <= 57)              return { icon: '🌧️', desc: 'Llovizna' };
-  if (code <= 67)              return { icon: '🌧️', desc: 'Lluvia' };
-  if (code <= 77)              return { icon: '❄️',  desc: 'Nieve' };
-  if (code <= 82)              return { icon: '🌦️', desc: 'Chubascos' };
-  if (code <= 86)              return { icon: '🌨️', desc: 'Nevada' };
-  if (code >= 95)              return { icon: '⛈️',  desc: 'Tormenta' };
-  return { icon: '🌡️', desc: 'Clima' };
+// ─── Helpers BD ───────────────────────────────────────────────────────────────
+
+interface HistoryRow {
+  id: number;
+  ticket_number: string;
+  desk: string | null;
+  section_title: string | null;
+  status: string;
+  priority: string | null;
 }
 
-interface WeatherData {
-  temp: number;
-  feelsLike: number;
-  humidity: number;
-  windSpeed: number;
-  weatherCode: number;
-  cityLabel: string;
+function getRecentCalledFromDB(limit = 8): HistoryRow[] {
+  return getDatabase().getAllSync<HistoryRow>(`
+    SELECT q.id, q.ticket_number, q.desk, q.status,
+           COALESCE(q.priority,'normal') as priority,
+           ss.title AS section_title
+    FROM queue q
+    LEFT JOIN service_sections ss ON q.service_section_id = ss.id
+    WHERE q.status IN ('calling','serving','completed')
+    ORDER BY COALESCE(q.called_at, q.created_at) DESC
+    LIMIT ?
+  `, [limit]);
 }
 
-// ─── Sub-componente: Widget de Clima ─────────────────────────────────────────
-
-function WeatherWidget({ cityKey }: { cityKey: string }) {
-  const [weather, setWeather] = useState<WeatherData | null>(null);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    const city = WEATHER_CITIES[cityKey];
-    if (!city) { setLoading(false); return; }
-
-    const fetchWeather = async () => {
-      try {
-        const url = `https://api.open-meteo.com/v1/forecast?latitude=${city.lat}&longitude=${city.lon}&current=temperature_2m,apparent_temperature,relative_humidity_2m,wind_speed_10m,weather_code&timezone=auto`;
-        const res  = await fetch(url);
-        const data = await res.json();
-        const c    = data.current;
-        setWeather({
-          temp:        Math.round(c.temperature_2m),
-          feelsLike:   Math.round(c.apparent_temperature),
-          humidity:    c.relative_humidity_2m,
-          windSpeed:   Math.round(c.wind_speed_10m),
-          weatherCode: c.weather_code,
-          cityLabel:   city.label,
-        });
-      } catch {
-        setWeather(null);
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    fetchWeather();
-    const interval = setInterval(fetchWeather, 10 * 60 * 1000); // actualiza cada 10 min
-    return () => clearInterval(interval);
-  }, [cityKey]);
-
-  if (loading) {
-    return (
-      <View style={wStyles.widget}>
-        <Text style={wStyles.loadingText}>🌡️ --°</Text>
-      </View>
-    );
-  }
-  if (!weather) return null;
-
-  const { icon, desc } = weatherCodeToInfo(weather.weatherCode);
-
-  return (
-    <View style={wStyles.widget}>
-      <Text style={wStyles.icon}>{icon}</Text>
-      <View>
-        <Text style={wStyles.temp}>{weather.temp}°C</Text>
-        <Text style={wStyles.city}>{weather.cityLabel}</Text>
-      </View>
-      <View style={wStyles.details}>
-        <Text style={wStyles.detail}>💧 {weather.humidity}%</Text>
-        <Text style={wStyles.detail}>💨 {weather.windSpeed} km/h</Text>
-      </View>
-    </View>
-  );
+function getLastCalledFromDB(): (TicketCalledPayload & { priority?: string }) | null {
+  const row = getDatabase().getFirstSync<{
+    ticket_number: string; desk: string | null;
+    section_title: string | null; full_name: string | null;
+    priority: string | null;
+  }>(`
+    SELECT q.ticket_number, q.desk,
+           COALESCE(q.priority,'normal') as priority,
+           ss.title AS section_title,
+           u.full_name
+    FROM queue q
+    LEFT JOIN service_sections ss ON q.service_section_id = ss.id
+    LEFT JOIN users u ON u.id = q.served_by
+    WHERE q.status IN ('calling','serving')
+    ORDER BY q.called_at DESC
+    LIMIT 1
+  `);
+  if (!row) return null;
+  return {
+    ticketNumber: row.ticket_number,
+    desk:         row.desk ?? 'Estación',
+    sectionTitle: row.section_title ?? 'General',
+    servedBy:     row.full_name ?? 'Empleado',
+    priority:     row.priority ?? 'normal',
+  };
 }
 
-const wStyles = StyleSheet.create({
-  widget: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: 'rgba(255,255,255,0.08)', borderRadius: 10, paddingHorizontal: 10, paddingVertical: 6 },
-  icon:        { fontSize: 22 },
-  temp:        { fontSize: 16, fontWeight: '700', color: '#fff' },
-  city:        { fontSize: 10, color: 'rgba(255,255,255,0.6)' },
-  details:     { gap: 2 },
-  detail:      { fontSize: 10, color: 'rgba(255,255,255,0.7)' },
-  loadingText: { fontSize: 14, color: 'rgba(255,255,255,0.5)' },
-});
+// ─── Componente ───────────────────────────────────────────────────────────────
 
-// ─── Sub-componente: Carrusel Multimedia ─────────────────────────────────────
-
-function MediaCarousel({ items }: { items: MediaItem[] }) {
-  const [index, setIndex]   = useState(0);
-  const fadeAnim            = useRef(new Animated.Value(1)).current;
-  const videoRef            = useRef<any>(null);
-
-  // Avanza al siguiente slide automáticamente
-  useEffect(() => {
-    if (items.length <= 1) return;
-    const current = items[index];
-    // Videos: dejarlos terminar (máx 30s), imágenes: 6s
-    const duration = current.type === 'video' ? 30000 : 6000;
-    const timer = setTimeout(() => advance(), duration);
-    return () => clearTimeout(timer);
-  }, [index, items]);
-
-  const advance = useCallback(() => {
-    Animated.timing(fadeAnim, { toValue: 0, duration: 400, useNativeDriver: true }).start(() => {
-      setIndex(i => (i + 1) % items.length);
-      Animated.timing(fadeAnim, { toValue: 1, duration: 400, useNativeDriver: true }).start();
-    });
-  }, [fadeAnim, items.length]);
-
-  if (items.length === 0) return null;
-
-  const current = items[index];
-
-  return (
-    <View style={cStyles.container}>
-      <Animated.View style={[cStyles.slide, { opacity: fadeAnim }]}>
-      {current.type === 'image' ? (
-  <Image source={{ uri: current.uri }} style={cStyles.media} resizeMode="cover" />
-) : (
-  <View style={[cStyles.media, cStyles.videoPlaceholder]}>
-    <Text style={{ fontSize: 48 }}>▶️</Text>
-    <Text style={{ color: '#fff', fontWeight: '700', marginTop: 8 }}>{current.name}</Text>
-    <Text style={{ color: 'rgba(255,255,255,0.6)', fontSize: 12 }}>Video</Text>
-  </View>
-)}
-        {/* Overlay suave en la parte inferior */}
-        <View style={cStyles.overlay} />
-      </Animated.View>
-
-      {/* Indicadores de posición */}
-      {items.length > 1 && (
-        <View style={cStyles.dots}>
-          {items.map((_, i) => (
-            <TouchableOpacity key={i} onPress={() => setIndex(i)}>
-              <View style={[cStyles.dot, i === index && cStyles.dotActive]} />
-            </TouchableOpacity>
-          ))}
-        </View>
-      )}
-
-      {/* Badge tipo de contenido */}
-      <View style={cStyles.badge}>
-        <Text style={cStyles.badgeText}>{current.type === 'video' ? '▶ VIDEO' : '📷 FOTO'}</Text>
-      </View>
-    </View>
-  );
-}
-
-const cStyles = StyleSheet.create({
-  container: { borderRadius: 14, overflow: 'hidden', height: 200, backgroundColor: COLORS.inverseSurface },
-  slide:     { flex: 1 },
-  media:     { width: '100%', height: '100%' },
-  overlay:   { position: 'absolute', bottom: 0, left: 0, right: 0, height: 60, backgroundColor: 'rgba(0,0,0,0.3)' },
-  dots:      { position: 'absolute', bottom: 10, alignSelf: 'center', flexDirection: 'row', gap: 6 },
-  dot:       { width: 6, height: 6, borderRadius: 3, backgroundColor: 'rgba(255,255,255,0.4)' },
-  dotActive: { width: 18, backgroundColor: '#fff' },
-  badge:     { position: 'absolute', top: 10, right: 10, backgroundColor: 'rgba(0,0,0,0.5)', borderRadius: 6, paddingHorizontal: 8, paddingVertical: 3 },
-  badgeText: { fontSize: 10, fontWeight: '700', color: '#fff', letterSpacing: 0.5 },
-  videoPlaceholder: { justifyContent: 'center', alignItems: 'center', backgroundColor: 'rgba(0,0,0,0.5)' },
-});
-
-// ─── Pantalla Principal ───────────────────────────────────────────────────────
-
-interface CurrentCall {
-  ticketNumber: string;
-  desk: string;
-  sectionTitle: string;
-  servedBy: string;
+interface CurrentCall extends TicketCalledPayload {
+  priority?: string;
 }
 
 export default function MonitorScreen() {
   const { logout } = useAuth();
+  const { soundType, setSoundType, playCallSound, isPlaying } = useMonitorSound('chime');
 
-  const [current, setCurrent] = useState<CurrentCall | null>(null);
-  const [history, setHistory] = useState<Queue[]>([]);
-  const [stats, setStats]     = useState({ waiting: 0, serving: 0, completed_today: 0, avg_wait_seconds: 0 });
-  const [currentTime, setTime]= useState('');
-  const [isLive, setIsLive]   = useState(true);
-  const [newCall, setNewCall] = useState(false);
+  const [current, setCurrent]  = useState<CurrentCall | null>(null);
+  const [history, setHistory]  = useState<HistoryRow[]>([]);
+  const [stats, setStats]      = useState({ waiting: 0, serving: 0, completed_today: 0, avg_wait_seconds: 0 });
+  const [currentTime, setTime] = useState('');
+  const [newCall, setNewCall]  = useState(false);
 
-  // Config del sistema
-  const [showWeather, setShowWeather] = useState(true);
-  const [weatherCity, setWeatherCity] = useState('chile_vina');
-  const [mediaItems, setMediaItems]   = useState<MediaItem[]>([]);
+  const [showWeather]  = useState(true);
+  const [weatherCity]  = useState('chile_vina');
 
-  // Animaciones
   const pulseAnim   = useRef(new Animated.Value(1)).current;
   const flashAnim   = useRef(new Animated.Value(0)).current;
   const numberScale = useRef(new Animated.Value(1)).current;
   const marqueeAnim = useRef(new Animated.Value(SW)).current;
 
-  // ─── Cargar config del sistema ──────────────────────────────────────────────
+  // ── Recargar estadísticas e historial ────────────────────────────────────
 
-  const loadConfig = useCallback(() => {
-    setShowWeather(getSystemConfig('show_weather') !== 'false');
-    setWeatherCity(getSystemConfig('weather_city') ?? 'chile_vina');
-    try {
-      const saved = getSystemConfig('monitor_media');
-      console.log('[Monitor] media raw:', saved);  // ← agrega esto
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        console.log('[Monitor] media items:', parsed.length, parsed[0]?.uri);
-        setMediaItems(parsed);
-      }
-    } catch (e) {
-      console.log('[Monitor] media error:', e);
-    }
-  }, []);
-
-  // ─── Datos de la cola ───────────────────────────────────────────────────────
-
-  const reloadStats = useCallback(() => {
+  const reloadData = useCallback(() => {
     setStats(getQueueStats());
-    setHistory(getRecentCompleted(6));
+    setHistory(getRecentCalledFromDB(8));
   }, []);
 
-  useEffect(() => {
-    reloadStats();
-    loadConfig();
-  }, [reloadStats, loadConfig]);
+  // ── Al montar ─────────────────────────────────────────────────────────────
 
-  // Recargar config al entrar en foco (por si Admin cambió algo)
   useEffect(() => {
-    const unsub = bus.on(EVENTS.QUEUE_UPDATED, () => {
-      loadConfig();
-    });
-    return unsub;
-  }, [loadConfig]);
+    reloadData();
+    const lastCall = getLastCalledFromDB();
+    if (lastCall) setCurrent(lastCall);
+  }, [reloadData]);
 
-  // ─── Reloj ──────────────────────────────────────────────────────────────────
+  // ── Reloj ─────────────────────────────────────────────────────────────────
 
   useEffect(() => {
     const tick = () => {
       const now = new Date();
-      setTime(now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true }).toUpperCase());
+      setTime(
+        now.toLocaleTimeString([], {
+          hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true,
+        }).toUpperCase()
+      );
     };
     tick();
     const t = setInterval(tick, 1000);
     return () => clearInterval(t);
   }, []);
 
-  // ─── Pulso continuo ─────────────────────────────────────────────────────────
+  // ── Pulso continuo ────────────────────────────────────────────────────────
 
   useEffect(() => {
     Animated.loop(
@@ -298,18 +155,20 @@ export default function MonitorScreen() {
     ).start();
   }, [pulseAnim]);
 
-  // ─── Marquee ────────────────────────────────────────────────────────────────
+  // ── Marquee ───────────────────────────────────────────────────────────────
 
   useEffect(() => {
-    const runMarquee = () => {
+    const run = () => {
       marqueeAnim.setValue(SW);
-      Animated.timing(marqueeAnim, { toValue: -SW * 2, duration: 22000, easing: Easing.linear, useNativeDriver: true })
-        .start(({ finished }) => { if (finished) runMarquee(); });
+      Animated.timing(marqueeAnim, {
+        toValue: -SW * 2, duration: 22000,
+        easing: Easing.linear, useNativeDriver: true,
+      }).start(({ finished }) => { if (finished) run(); });
     };
-    runMarquee();
+    run();
   }, [marqueeAnim]);
 
-  // ─── Flash al llamar ────────────────────────────────────────────────────────
+  // ── Animación al llamar ───────────────────────────────────────────────────
 
   const playCallAnimation = useCallback(() => {
     setNewCall(true);
@@ -320,43 +179,62 @@ export default function MonitorScreen() {
       Animated.timing(flashAnim, { toValue: 0, duration: 300, useNativeDriver: false }),
     ]).start();
     Animated.sequence([
-      Animated.timing(numberScale, { toValue: 1.15, duration: 200, useNativeDriver: true }),
-      Animated.spring(numberScale,  { toValue: 1,    useNativeDriver: true, friction: 4 }),
+      Animated.timing(numberScale, { toValue: 1.18, duration: 200, useNativeDriver: true }),
+      Animated.spring(numberScale, { toValue: 1, useNativeDriver: true, friction: 4 }),
     ]).start();
-    setTimeout(() => setNewCall(false), 3000);
+    setTimeout(() => setNewCall(false), 3500);
   }, [flashAnim, numberScale]);
 
-  // ─── EventBus ───────────────────────────────────────────────────────────────
+  // ── EventBus ──────────────────────────────────────────────────────────────
 
   useEffect(() => {
-    const unsubCall = bus.on<TicketCalledPayload>(EVENTS.TICKET_CALLED, (payload) => {
-      setCurrent({ ticketNumber: payload.ticketNumber, desk: payload.desk, sectionTitle: payload.sectionTitle, servedBy: payload.servedBy });
-      playCallAnimation();
-      reloadStats();
-    });
-    const unsubQueue   = bus.on(EVENTS.QUEUE_UPDATED, () => { reloadStats(); setHistory(getRecentCompleted(6)); });
-    const unsubCreated = bus.on<TicketCreatedPayload>(EVENTS.TICKET_CREATED, () => { reloadStats(); });
-    return () => { unsubCall(); unsubQueue(); unsubCreated(); };
-  }, [playCallAnimation, reloadStats]);
+    const unsubCall = bus.on<TicketCalledPayload & { priority?: string }>(
+      EVENTS.TICKET_CALLED,
+      (payload) => {
+        setCurrent(payload);
+        // ✅ Reproducir sonido según tipo seleccionado
+        playCallSound(payload.ticketNumber, payload.desk);
+        playCallAnimation();
+        reloadData();
+      }
+    );
+    const unsubQueue = bus.on(EVENTS.QUEUE_UPDATED, reloadData);
+    return () => { unsubCall(); unsubQueue(); };
+  }, [playCallSound, playCallAnimation, reloadData]);
+
+  // ── Logout ────────────────────────────────────────────────────────────────
+
+  const handleLogout = () => {
+    Alert.alert('Salir', '¿Cerrar sesión de monitor?', [
+      { text: 'Cancelar', style: 'cancel' },
+      {
+        text: 'Salir', style: 'destructive',
+        onPress: async () => { await logout(); router.replace('/login'); },
+      },
+    ]);
+  };
 
   const flashBg = flashAnim.interpolate({
     inputRange:  [0, 1],
     outputRange: [COLORS.surfaceContainerLowest, COLORS.primary + '18'],
   });
 
-  const handleLogout = () => {
-    Alert.alert('Salir', '¿Cerrar sesión de monitor?', [
-      { text: 'Cancelar', style: 'cancel' },
-      { text: 'Salir', style: 'destructive', onPress: async () => { await logout(); router.replace('/login'); } },
-    ]);
-  };
+  const formatWait = (secs: number) =>
+    secs < 60 ? `${secs}s` : `${Math.round(secs / 60)}m`;
 
-  const formatWait = (secs: number) => {
-    if (secs < 60) return `${secs}s`;
-    return `${Math.round(secs / 60)}m`;
-  };
+  const currentPriority = (current?.priority ?? 'normal') as TicketPriority;
+  const priColor = PRIO_COLORS[currentPriority] ?? PRIO_COLORS.normal;
 
-  // ─── Render ─────────────────────────────────────────────────────────────────
+  // ─── Opciones de sonido ────────────────────────────────────────────────────
+
+  const SOUND_OPTIONS: { type: SoundType; label: string; Icon: any }[] = [
+    { type: 'beep',   label: 'Beep',       Icon: Volume2 },
+    { type: 'chime',  label: 'Campanilla', Icon: Music   },
+    { type: 'voice',  label: 'Voz',        Icon: Mic     },
+    { type: 'silent', label: 'Silencio',   Icon: VolumeX },
+  ];
+
+  // ─── RENDER ───────────────────────────────────────────────────────────────
 
   return (
     <SafeAreaView style={styles.root} edges={['top']}>
@@ -364,15 +242,12 @@ export default function MonitorScreen() {
       {/* TOP BAR */}
       <View style={styles.topBar}>
         <View style={styles.topLeft}>
-          <View style={[styles.liveDot, { backgroundColor: isLive ? '#4ade80' : COLORS.error }]} />
-          <Text style={styles.topTitle}>Warteliste</Text>
+          <View style={styles.liveDot} />
+          <Text style={styles.topTitle}>QueueMaster Pro</Text>
           <Text style={styles.topSub}>Monitor · Sala de Espera</Text>
         </View>
         <View style={styles.topRight}>
-          {/* Widget clima en la barra superior */}
-          {showWeather && <WeatherWidget cityKey={weatherCity} />}
           <Text style={styles.clock}>{currentTime}</Text>
-          {isLive ? <Wifi size={16} color="#4ade80" /> : <WifiOff size={16} color={COLORS.error} />}
           <TouchableOpacity onPress={handleLogout} style={styles.logoutBtn}>
             <LogOut size={18} color={COLORS.inverseOnSurface + 'aa'} />
           </TouchableOpacity>
@@ -381,31 +256,77 @@ export default function MonitorScreen() {
 
       <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
 
-        {/* AHORA SIRVIENDO */}
+        {/* ── SELECTOR DE SONIDO ── */}
+        <View style={styles.soundBar}>
+          <Text style={styles.soundLabel}>
+            {isPlaying ? '🔊 Reproduciendo...' : '🔔 Alerta sonora:'}
+          </Text>
+          <View style={styles.soundBtns}>
+            {SOUND_OPTIONS.map(({ type, label, Icon }) => (
+              <TouchableOpacity
+                key={type}
+                style={[
+                  styles.soundBtn,
+                  soundType === type && styles.soundBtnActive,
+                ]}
+                onPress={() => setSoundType(type)}
+                activeOpacity={0.8}
+              >
+                <Icon
+                  size={15}
+                  color={soundType === type ? COLORS.primary : COLORS.onSurfaceVariant}
+                />
+                <Text style={[
+                  styles.soundBtnText,
+                  soundType === type && { color: COLORS.primary, fontWeight: '700' },
+                ]}>
+                  {label}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+        </View>
+
+        {/* ── AHORA SIRVIENDO ── */}
         <Animated.View style={[styles.nowCard, { backgroundColor: flashBg }]}>
           {newCall && (
             <View style={styles.newCallBanner}>
               <Text style={styles.newCallText}>🔔 ¡NUEVO LLAMADO!</Text>
             </View>
           )}
+
           <View style={styles.nowHeader}>
             <Text style={styles.nowLabel}>🔔  AHORA SIRVIENDO</Text>
             {current && (
-              <View style={styles.deskBadge}>
-                <Text style={styles.deskBadgeText}>{current.desk}</Text>
+              <View style={[styles.deskBadge, { backgroundColor: priColor.bg }]}>
+                <Text style={[styles.deskBadgeText, { color: priColor.text }]}>
+                  {current.desk}
+                </Text>
               </View>
             )}
           </View>
 
           {current ? (
             <>
-              <Animated.Text style={[styles.bigNumber, { transform: [{ scale: numberScale }] }]}>
+              {/* Badge de prioridad si no es normal */}
+              {currentPriority !== 'normal' && (
+                <View style={[styles.prioBanner, { backgroundColor: priColor.bg }]}>
+                  <Text style={[styles.prioBannerText, { color: priColor.text }]}>
+                    {PRIORITY_ICONS[currentPriority]} Atención {PRIORITY_LABELS[currentPriority]}
+                  </Text>
+                </View>
+              )}
+
+              <Animated.Text style={[
+                styles.bigNumber,
+                { transform: [{ scale: numberScale }] },
+              ]}>
                 {current.ticketNumber}
               </Animated.Text>
               <Text style={styles.nowSection}>{current.sectionTitle}</Text>
               <View style={styles.deskRow}>
                 <Text style={styles.deskLabel}>Dirígete a:</Text>
-                <View style={styles.deskChip}>
+                <View style={[styles.deskChip, { borderColor: priColor.text + '44' }]}>
                   <Text style={styles.deskChipText}>{current.desk}</Text>
                 </View>
               </View>
@@ -415,16 +336,18 @@ export default function MonitorScreen() {
             <View style={styles.standby}>
               <Text style={styles.standbyIcon}>⏳</Text>
               <Text style={styles.standbyText}>En espera de llamado...</Text>
-              <Text style={styles.standbySub}>El número aparecerá aquí cuando un empleado llame el siguiente turno</Text>
+              <Text style={styles.standbySub}>
+                El número aparecerá aquí cuando un empleado llame el siguiente turno
+              </Text>
             </View>
           )}
         </Animated.View>
 
-        {/* ESTADÍSTICAS */}
+        {/* ── ESTADÍSTICAS ── */}
         <View style={styles.statsRow}>
           {[
-            { label: 'Esperando',   val: stats.waiting,          icon: '👥', color: COLORS.primary },
-            { label: 'Completados', val: stats.completed_today,  icon: '✅', color: COLORS.primaryContainer },
+            { label: 'Esperando',   val: stats.waiting,         icon: '👥', color: COLORS.primary },
+            { label: 'Completados', val: stats.completed_today, icon: '✅', color: COLORS.primaryContainer },
             { label: 'Espera prom', val: formatWait(stats.avg_wait_seconds), icon: '⏱', color: COLORS.secondary },
           ].map(s => (
             <View key={s.label} style={styles.statCard}>
@@ -435,35 +358,60 @@ export default function MonitorScreen() {
           ))}
         </View>
 
-        {/* CARRUSEL MULTIMEDIA — solo si hay contenido */}
-        {mediaItems.length > 0 && (
-          <View style={styles.mediaSection}>
-            <Text style={styles.mediaSectionTitle}>📺  Contenido del Monitor</Text>
-            <MediaCarousel items={mediaItems} />
-          </View>
-        )}
-
-        {/* HISTORIAL RECIENTE */}
-        {history.length > 0 && (
+        {/* ── HISTORIAL ── */}
+        {history.length > 0 ? (
           <View style={styles.historyCard}>
             <Text style={styles.historyTitle}>Turnos Recientes</Text>
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.historyScroll}>
-              {history.map((t, i) => (
-                <View key={t.id} style={[styles.histChip, { opacity: 1 - i * 0.13 }]}>
-                  <Text style={styles.histNum}>{t.ticket_number}</Text>
-                  <Text style={styles.histDesk}>{t.desk ?? '—'}</Text>
-                </View>
-              ))}
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={styles.historyScroll}
+            >
+              {history.map((t, i) => {
+                const p = (t.priority ?? 'normal') as TicketPriority;
+                const pc = PRIO_COLORS[p] ?? PRIO_COLORS.normal;
+                const isActive = t.status === 'calling' || t.status === 'serving';
+                return (
+                  <View
+                    key={t.id}
+                    style={[
+                      styles.histChip,
+                      { opacity: Math.max(0.4, 1 - i * 0.1) },
+                      isActive && styles.histChipActive,
+                      p !== 'normal' && { borderColor: pc.text + '55', backgroundColor: pc.bg },
+                    ]}
+                  >
+                    <Text style={[styles.histNum, p !== 'normal' && { color: pc.text }]}>
+                      {t.ticket_number}
+                    </Text>
+                    <Text style={styles.histDesk}>{t.desk ?? '—'}</Text>
+                    {p !== 'normal' && (
+                      <Text style={[styles.histPrio, { color: pc.text }]}>
+                        {PRIORITY_ICONS[p]}
+                      </Text>
+                    )}
+                    {isActive && <View style={styles.histActiveDot} />}
+                  </View>
+                );
+              })}
             </ScrollView>
+          </View>
+        ) : (
+          <View style={styles.emptyHistory}>
+            <Text style={styles.emptyHistoryIcon}>🎫</Text>
+            <Text style={styles.emptyHistoryText}>Sin turnos llamados aún</Text>
+            <Text style={styles.emptyHistorySub}>
+              Los tickets aparecerán aquí cuando un empleado llame el siguiente turno
+            </Text>
           </View>
         )}
 
       </ScrollView>
 
-      {/* MARQUEE INFERIOR */}
+      {/* MARQUEE */}
       <View style={styles.marqueeBar}>
         <Animated.Text style={[styles.marqueeText, { transform: [{ translateX: marqueeAnim }] }]}>
-          ⚡ Tiempo estimado de espera: {formatWait(stats.avg_wait_seconds)}  •  {stats.waiting} personas en fila  •  Tenga su identificación lista para un servicio más rápido  •  Únase a nuestro programa de fidelidad para prioridad de atención
+          ⚡ Tiempo estimado: {formatWait(stats.avg_wait_seconds)}  •  {stats.waiting} personas en fila  •  Tenga su identificación lista  •  Atención preferencial para adultos mayores y personas con discapacidad
         </Animated.Text>
       </View>
 
@@ -471,50 +419,120 @@ export default function MonitorScreen() {
   );
 }
 
+// ─── Estilos ──────────────────────────────────────────────────────────────────
+
 const styles = StyleSheet.create({
-  root: { flex: 1, backgroundColor: COLORS.inverseSurface },
-  topBar: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 10, backgroundColor: COLORS.inverseSurface, borderBottomWidth: 1, borderBottomColor: 'rgba(255,255,255,0.08)' },
-  topLeft: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  liveDot: { width: 8, height: 8, borderRadius: 4 },
+  root:    { flex: 1, backgroundColor: COLORS.inverseSurface },
+  topBar:  {
+    flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
+    paddingHorizontal: 16, paddingVertical: 10,
+    backgroundColor: COLORS.inverseSurface,
+    borderBottomWidth: 1, borderBottomColor: 'rgba(255,255,255,0.08)',
+  },
+  topLeft:  { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  liveDot:  { width: 8, height: 8, borderRadius: 4, backgroundColor: '#4ade80' },
   topTitle: { fontSize: 16, fontWeight: '700', color: COLORS.inverseOnSurface },
-  topSub: { fontSize: 12, color: COLORS.inverseOnSurface + '80' },
+  topSub:   { fontSize: 12, color: COLORS.inverseOnSurface + '80' },
   topRight: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  clock: { fontSize: 13, fontWeight: '600', color: COLORS.inverseOnSurface },
-  logoutBtn: { padding: 6 },
-  scroll: { padding: 14, gap: 14, paddingBottom: 60 },
-  nowCard: { borderRadius: 16, padding: 28, alignItems: 'center', gap: 10, borderWidth: 1, borderColor: COLORS.outlineVariant, overflow: 'hidden', minHeight: 280 },
-  newCallBanner: { position: 'absolute', top: 0, left: 0, right: 0, backgroundColor: COLORS.primary, paddingVertical: 8, alignItems: 'center' },
-  newCallText: { fontSize: 14, fontWeight: '800', color: COLORS.onPrimary, letterSpacing: 2 },
-  nowHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', width: '100%', marginTop: 8 },
-  nowLabel: { fontSize: 13, fontWeight: '700', color: COLORS.onSurfaceVariant, letterSpacing: 1.5, textTransform: 'uppercase' },
-  deskBadge: { backgroundColor: COLORS.primaryContainer, paddingHorizontal: 12, paddingVertical: 4, borderRadius: 999 },
-  deskBadgeText: { fontSize: 13, fontWeight: '700', color: COLORS.onPrimaryContainer },
-  bigNumber: { fontSize: 100, fontWeight: '800', color: COLORS.primary, letterSpacing: -4, lineHeight: 110 },
+  clock:    { fontSize: 13, fontWeight: '600', color: COLORS.inverseOnSurface },
+  logoutBtn:{ padding: 6 },
+  scroll:   { padding: 14, gap: 14, paddingBottom: 60 },
+
+  // Selector de sonido
+  soundBar: {
+    backgroundColor: COLORS.surfaceContainerLowest + 'ee',
+    borderRadius: 12, padding: 12,
+    borderWidth: 1, borderColor: COLORS.outlineVariant,
+    gap: 8,
+  },
+  soundLabel:    { fontSize: 12, color: COLORS.onSurfaceVariant, fontWeight: '600' },
+  soundBtns:     { flexDirection: 'row', gap: 6 },
+  soundBtn: {
+    flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
+    gap: 4, paddingVertical: 7, borderRadius: 8,
+    borderWidth: 1, borderColor: COLORS.outlineVariant,
+    backgroundColor: COLORS.surfaceContainerLow,
+  },
+  soundBtnActive: {
+    borderColor: COLORS.primary,
+    backgroundColor: COLORS.primaryContainer + '55',
+  },
+  soundBtnText: { fontSize: 11, color: COLORS.onSurfaceVariant },
+
+  // Ahora sirviendo
+  nowCard: {
+    borderRadius: 16, padding: 28, alignItems: 'center', gap: 10,
+    borderWidth: 1, borderColor: COLORS.outlineVariant,
+    overflow: 'hidden', minHeight: 280,
+  },
+  newCallBanner: {
+    position: 'absolute', top: 0, left: 0, right: 0,
+    backgroundColor: COLORS.primary, paddingVertical: 8, alignItems: 'center',
+  },
+  newCallText:  { fontSize: 14, fontWeight: '800', color: COLORS.onPrimary, letterSpacing: 2 },
+  nowHeader:    { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', width: '100%', marginTop: 8 },
+  nowLabel:     { fontSize: 13, fontWeight: '700', color: COLORS.onSurfaceVariant, letterSpacing: 1.5, textTransform: 'uppercase' },
+  deskBadge:    { paddingHorizontal: 12, paddingVertical: 4, borderRadius: 999 },
+  deskBadgeText:{ fontSize: 13, fontWeight: '700' },
+
+  // Badge prioridad en el número grande
+  prioBanner: {
+    paddingHorizontal: 16, paddingVertical: 6, borderRadius: 999,
+    marginBottom: 4,
+  },
+  prioBannerText: { fontSize: 13, fontWeight: '700' },
+
+  bigNumber:  { fontSize: 100, fontWeight: '800', color: COLORS.primary, letterSpacing: -4, lineHeight: 110 },
   nowSection: { fontSize: 18, fontWeight: '600', color: COLORS.onSurfaceVariant },
-  deskRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 4 },
-  deskLabel: { fontSize: 15, color: COLORS.onSurfaceVariant },
-  deskChip: { backgroundColor: COLORS.primaryContainer, paddingHorizontal: 20, paddingVertical: 8, borderRadius: 12 },
+  deskRow:    { flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 4 },
+  deskLabel:  { fontSize: 15, color: COLORS.onSurfaceVariant },
+  deskChip:   {
+    backgroundColor: COLORS.primaryContainer, paddingHorizontal: 20, paddingVertical: 8,
+    borderRadius: 12, borderWidth: 1, borderColor: 'transparent',
+  },
   deskChipText: { fontSize: 22, fontWeight: '700', color: COLORS.onPrimaryContainer },
-  servedBy: { fontSize: 12, color: COLORS.outline, marginTop: 4 },
-  standby: { alignItems: 'center', gap: 10, paddingVertical: 20 },
-  standbyIcon: { fontSize: 48 },
-  standbyText: { fontSize: 18, fontWeight: '600', color: COLORS.onSurfaceVariant },
-  standbySub: { fontSize: 13, color: COLORS.outline, textAlign: 'center', maxWidth: 280, lineHeight: 18 },
+  servedBy:     { fontSize: 12, color: COLORS.outline, marginTop: 4 },
+  standby:      { alignItems: 'center', gap: 10, paddingVertical: 20 },
+  standbyIcon:  { fontSize: 48 },
+  standbyText:  { fontSize: 18, fontWeight: '600', color: COLORS.onSurfaceVariant },
+  standbySub:   { fontSize: 13, color: COLORS.outline, textAlign: 'center', maxWidth: 280, lineHeight: 18 },
+
+  // Stats
   statsRow: { flexDirection: 'row', gap: 10 },
-  statCard: { flex: 1, backgroundColor: COLORS.surfaceContainerLowest + 'dd', borderRadius: 12, padding: 14, alignItems: 'center', gap: 4, borderWidth: 1, borderColor: COLORS.outlineVariant },
-  statIcon: { fontSize: 20 },
-  statVal: { fontSize: 24, fontWeight: '700' },
+  statCard: {
+    flex: 1, backgroundColor: COLORS.surfaceContainerLowest + 'dd',
+    borderRadius: 12, padding: 14, alignItems: 'center', gap: 4,
+    borderWidth: 1, borderColor: COLORS.outlineVariant,
+  },
+  statIcon:  { fontSize: 20 },
+  statVal:   { fontSize: 24, fontWeight: '700' },
   statLabel: { fontSize: 11, color: COLORS.onSurfaceVariant, textAlign: 'center' },
-  // Multimedia
-  mediaSection: { gap: 8 },
-  mediaSectionTitle: { fontSize: 12, fontWeight: '700', color: COLORS.onSurfaceVariant + 'cc', textTransform: 'uppercase', letterSpacing: 1 },
+
   // Historial
-  historyCard: { backgroundColor: COLORS.surfaceContainerLowest + 'cc', borderRadius: 12, padding: 14, borderWidth: 1, borderColor: COLORS.outlineVariant, gap: 10 },
-  historyTitle: { fontSize: 12, fontWeight: '700', color: COLORS.onSurfaceVariant, textTransform: 'uppercase', letterSpacing: 1 },
-  historyScroll: { gap: 10 },
-  histChip: { backgroundColor: COLORS.surfaceContainerLow, borderRadius: 10, paddingHorizontal: 16, paddingVertical: 10, alignItems: 'center', minWidth: 80, borderWidth: 1, borderColor: COLORS.outlineVariant },
-  histNum: { fontSize: 16, fontWeight: '700', color: COLORS.primary },
-  histDesk: { fontSize: 11, color: COLORS.onSurfaceVariant, marginTop: 2 },
-  marqueeBar: { position: 'absolute', bottom: 0, left: 0, right: 0, backgroundColor: COLORS.primary, paddingVertical: 10, overflow: 'hidden' },
+  historyCard:  {
+    backgroundColor: COLORS.surfaceContainerLowest + 'cc',
+    borderRadius: 12, padding: 14,
+    borderWidth: 1, borderColor: COLORS.outlineVariant, gap: 10,
+  },
+  historyTitle:  { fontSize: 12, fontWeight: '700', color: COLORS.onSurfaceVariant, textTransform: 'uppercase', letterSpacing: 1 },
+  historyScroll: { gap: 10, paddingBottom: 2 },
+  histChip: {
+    backgroundColor: COLORS.surfaceContainerLow, borderRadius: 10,
+    paddingHorizontal: 16, paddingVertical: 10, alignItems: 'center',
+    minWidth: 80, borderWidth: 1, borderColor: COLORS.outlineVariant, position: 'relative',
+  },
+  histChipActive: { borderColor: COLORS.primary, backgroundColor: COLORS.primaryContainer + '55' },
+  histNum:        { fontSize: 16, fontWeight: '700', color: COLORS.primary },
+  histDesk:       { fontSize: 11, color: COLORS.onSurfaceVariant, marginTop: 2 },
+  histPrio:       { fontSize: 14, marginTop: 2 },
+  histActiveDot:  { position: 'absolute', top: 6, right: 6, width: 7, height: 7, borderRadius: 4, backgroundColor: '#4ade80' },
+
+  emptyHistory:     { alignItems: 'center', padding: 28, gap: 8, backgroundColor: COLORS.surfaceContainerLowest + 'aa', borderRadius: 12, borderWidth: 1, borderColor: COLORS.outlineVariant },
+  emptyHistoryIcon: { fontSize: 36 },
+  emptyHistoryText: { fontSize: 16, fontWeight: '700', color: COLORS.onSurfaceVariant },
+  emptyHistorySub:  { fontSize: 13, color: COLORS.outline, textAlign: 'center', lineHeight: 18 },
+
+  // Marquee
+  marqueeBar:  { position: 'absolute', bottom: 0, left: 0, right: 0, backgroundColor: COLORS.primary, paddingVertical: 10, overflow: 'hidden' },
   marqueeText: { fontSize: 13, fontWeight: '600', color: COLORS.onPrimary, textTransform: 'uppercase', letterSpacing: 0.5 },
 });

@@ -1,137 +1,118 @@
 /**
- * QueueMaster Pro — Auth Context
- * Proveedor global de autenticación para toda la app.
+ * Warteliste — Auth Context
+ * Compatible con AuthUser que ahora incluye uuid_id y company_id.
+ * setUser ANTES de setIsLoading(false) → evita loop de redirect en AuthGate.
  *
- * Uso en componentes:
- *   const { user, login, logout, isLoading } = useAuth();
+ * Ubicación: store/authcontext.tsx
  */
 
-import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import React, {
+  createContext, useContext, useState, useEffect, useCallback,
+} from 'react';
+import { initializeDatabase } from '../service/database';
 import {
   login as dbLogin,
   logout as dbLogout,
   restoreSession,
   registerUser,
   changePassword,
-  AuthUser,
-  LoginResult,
-  RegisterInput,
+  type AuthUser,
+  type LoginResult,
+  type RegisterInput,
 } from '../service/authservice';
-import * as SecureStore from 'expo-secure-store';
-import { initializeDatabase, resetDatabase } from '../service/database';
 
-// ─── Tipos del contexto ───────────────────────────────────────────────────────
+// ─── Tipos ────────────────────────────────────────────────────────────────────
 
 interface AuthContextType {
-  user: AuthUser | null;
-  isLoading: boolean;
+  user:            AuthUser | null;
+  isLoading:       boolean;
   isAuthenticated: boolean;
-  dbReady: boolean;
-  login: (email: string, password: string) => Promise<LoginResult>;
-  logout: () => Promise<void>;
-  register: (input: RegisterInput) => Promise<LoginResult>;
-  changePassword: (current: string, next: string) => Promise<{ success: boolean; error?: string }>;
-  refreshUser: () => Promise<void>;
+  dbReady:         boolean;
+  login:           (email: string, password: string) => Promise<LoginResult>;
+  logout:          () => Promise<void>;
+  register:        (input: RegisterInput) => Promise<LoginResult>;
+  changePassword:  (current: string, next: string) => Promise<{ success: boolean; error?: string }>;
+  refreshUser:     () => Promise<void>;
 }
-
-// ─── Contexto ─────────────────────────────────────────────────────────────────
 
 const AuthContext = createContext<AuthContextType | null>(null);
 
+// ─── Provider ─────────────────────────────────────────────────────────────────
+
 export function AuthProvider({ children }: { children: React.ReactNode }) {
-  const [user, setUser] = useState<AuthUser | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
+  const [user, setUser]       = useState<AuthUser | null>(null);
+  const [isLoading, setLoad]  = useState(true);
   const [dbReady, setDbReady] = useState(false);
 
-  // Inicializar BD y restaurar sesión al arrancar
+  // Bootstrap al arrancar
   useEffect(() => {
     let cancelled = false;
-  
+
     async function bootstrap() {
       try {
-        const fixed = await SecureStore.getItemAsync('db_hash_fixed_v4');
-        if (!fixed) {
-          await resetDatabase();
-          await SecureStore.setItemAsync('db_hash_fixed_v4', '1');
-        }
         await initializeDatabase();
         if (!cancelled) setDbReady(true);
+
         const restored = await restoreSession();
+
         if (!cancelled) {
+          // ⚠️ ORDEN CRÍTICO: setUser primero, luego setIsLoading(false)
+          // Si se invierte, AuthGate ve isLoading=false con user=null por un frame
+          // y hace router.replace('/login') causando el loop.
           setUser(restored);
-          setIsLoading(false);
+          setLoad(false);
         }
       } catch (e) {
-        console.error('[Auth] bootstrap error:', e);
-        if (!cancelled) setIsLoading(false);
+        console.error('[Auth] bootstrap:', e);
+        if (!cancelled) setLoad(false);
       }
     }
-  //**  Esto usar cuando la función resetDatabase ya no hace initialize, para evitar doble inicialización
-  //async function bootstrap() {
-  //  try {
-   //   console.log('[Auth] bootstrap iniciado');
-    //  await resetDatabase();        // solo resetea, no inicializa
-     // console.log('[Auth] Reset completado');
-     // await initializeDatabase();   // una sola vez aquí
-     // if (!cancelled) setDbReady(true);
-      //const restored = await restoreSession();
-      //if (!cancelled) {
-       // setUser(restored);
-        //setIsLoading(false);
-     // }
-   // } catch (e) {
-     // console.error('[Auth] bootstrap error:', e);
-      //if (!cancelled) setIsLoading(false);
-   // }
- // }
-  //  */
+
     bootstrap();
     return () => { cancelled = true; };
   }, []);
 
-  const login = useCallback(async (email: string, password: string): Promise<LoginResult> => {
-    setIsLoading(true);
-    try {
+  // ── Login ─────────────────────────────────────────────────────────────────
+
+  const login = useCallback(
+    async (email: string, password: string): Promise<LoginResult> => {
+      // No usamos isLoading global aquí — la pantalla de login tiene su propio spinner
       const result = await dbLogin(email, password);
-      if (result.success && result.user) {
-        setUser(result.user);
-      }
+      if (result.success && result.user) setUser(result.user);
       return result;
-    } finally {
-      setIsLoading(false);
-    }
-  }, []);
+    },
+    [],
+  );
+
+  // ── Logout ────────────────────────────────────────────────────────────────
 
   const logout = useCallback(async () => {
-    setIsLoading(true);
-    try {
-      await dbLogout(user?.id);
-      setUser(null);
-    } finally {
-      setIsLoading(false);
-    }
+    await dbLogout(user?.id);
+    setUser(null);
   }, [user]);
 
-  const register = useCallback(async (input: RegisterInput): Promise<LoginResult> => {
-    setIsLoading(true);
-    try {
+  // ── Registro ──────────────────────────────────────────────────────────────
+
+  const register = useCallback(
+    async (input: RegisterInput): Promise<LoginResult> => {
       const result = await registerUser(input);
-      if (result.success && result.user) {
-        setUser(result.user);
-      }
+      if (result.success && result.user) setUser(result.user);
       return result;
-    } finally {
-      setIsLoading(false);
-    }
-  }, []);
+    },
+    [],
+  );
+
+  // ── Cambio de contraseña ──────────────────────────────────────────────────
 
   const handleChangePassword = useCallback(
     async (current: string, next: string) => {
       if (!user) return { success: false, error: 'No hay sesión activa.' };
       return changePassword(user.id, current, next);
     },
-    [user]
+    [user],
   );
+
+  // ── Refresh ───────────────────────────────────────────────────────────────
 
   const refreshUser = useCallback(async () => {
     const restored = await restoreSession();
