@@ -1,7 +1,7 @@
 /**
- * QueueMaster Pro — Event Bus
+ * Warteliste — Event Bus
  * Comunicación en tiempo real entre pantallas sin servidor.
- * Monitor escucha eventos de llamada de tickets desde Dashboard.
+ * Monitor, Dashboard y Kiosko escuchan eventos entre sí.
  *
  * Ubicación: service/eventBus.ts
  */
@@ -16,7 +16,6 @@ class EventBus {
       this.listeners.set(event, new Set());
     }
     this.listeners.get(event)!.add(handler);
-    // Retorna función de cleanup
     return () => this.off(event, handler);
   }
 
@@ -31,13 +30,11 @@ class EventBus {
 
 export const bus = new EventBus();
 
-// ─── Eventos del sistema ──────────────────────────────────────────────────────
-
 export const EVENTS = {
-  TICKET_CALLED:    'ticket:called',    // Dashboard → Monitor
-  TICKET_COMPLETED: 'ticket:completed', // Dashboard → Monitor
-  TICKET_CREATED:   'ticket:created',   // Kiosk → Dashboard/Monitor
-  QUEUE_UPDATED:    'queue:updated',    // Cualquier cambio de fila
+  TICKET_CALLED:    'ticket:called',
+  TICKET_COMPLETED: 'ticket:completed',
+  TICKET_CREATED:   'ticket:created',
+  QUEUE_UPDATED:    'queue:updated',    // cualquier cambio en la cola o secciones
 } as const;
 
 export interface TicketCalledPayload {
@@ -45,6 +42,7 @@ export interface TicketCalledPayload {
   desk: string;
   sectionTitle: string;
   servedBy: string;
+  priority?: string;
 }
 
 export interface TicketCreatedPayload {
